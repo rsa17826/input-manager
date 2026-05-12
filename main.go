@@ -19,43 +19,38 @@ func main() {
 		os.Exit(1)
 	}
 	defer rootKbd.Close()
+	err = rootKbd.Grab()
+	if err != nil {
+		panic(err)
+	}
 
-	// 2. Create Virtual Keyboard (uinput)
-	// This is what the OS actually "hears" when we allow a key through
 	vKb, err := input.CreateVirtualKeyboard("root kbd")
 	if err != nil {
 		panic(err)
 	}
 	var ev input.InputEvent
+	var ctrlPressed bool
 	for {
 		ev, err = rootKbd.ReadNextInput()
 		if ev.Type != input.EV_KEY {
 			continue
 		}
-		switch ev.Value {
-		case 1: // key down
-			pressKey(ev.Code)
-		case 0: // key up
-			releaseKey(ev.Code)
-			// value 2 = repeat - ignore
+		if ev.Code == input.KEY_LEFTCTRL {
+			ctrlPressed = ev.Value == 1
+		}
+		if ev.Code == input.KEY_ESC && ctrlPressed {
+			os.Exit(5)
 		}
 		if err != nil {
 			panic(err)
 		}
-		// --- EMERGENCY KILL SWITCH ---
-		// Detect Physical Ctrl + Esc
-		if isKillCombo(event) {
-			cleanupAndExit()
-		}
-
 		// --- LOGIC GATE ---
 		if shouldBlock(event) {
 			// Notify blocking macro scripts via socket
 			// DO NOT write to vKb
 		} else {
-			// Passthrough: Write the physical event to the virtual keyboard
-			vKb.WriteEvent(event)
 			// Also notify passthrough scripts (Input Display)
+			vKb.SendEvent(ev.Type, ev.Code, ev.Value)
 			notifyPassthrough(event)
 		}
 	}
