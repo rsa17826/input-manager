@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -13,13 +14,23 @@ import (
 )
 
 type Client struct {
-	conn net.Conn
-	mode string
+	conn      net.Conn
+	mode      string
+	send      chan WireEvent
+	blockResp chan bool
+}
+
+type WireEvent struct {
+	Sec   int64
+	Usec  int64
+	Type  uint16
+	Code  uint16
+	Value int32
 }
 
 const (
-	ModePassthrough = "LISTEN" // Just wants a copy
-	ModeBlocking    = "FILTER" // Wants to intercept
+	ModePassthrough = "LISTEN"
+	ModeBlocking    = "FILTER"
 )
 
 var (
@@ -28,42 +39,99 @@ var (
 	socketPath = "/tmp/kbd_manager.sock"
 )
 
+var eventBus = make(chan WireEvent, 1024)
+
 func startSocketServer() {
 	os.Remove(socketPath)
+
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
 		panic(err)
 	}
+
 	for {
 		conn, _ := l.Accept()
 		go handleNewConnection(conn)
 	}
 }
+
 func closeConnection() {
 	os.Remove(socketPath)
 }
 
 func handleNewConnection(conn net.Conn) {
-	// First line from client should be "LISTEN" or "FILTER"
 	mode, _ := bufio.NewReader(conn).ReadString('\n')
 	mode = strings.TrimSpace(mode)
 
+	c := &Client{
+		conn: conn,
+		mode: mode,
+		send: make(chan WireEvent, 256),
+	}
+
 	clientsMu.Lock()
-	clients = append(clients, &Client{conn: conn, mode: mode})
+	clients = append(clients, c)
 	clientsMu.Unlock()
 
-	fmt.Printf("New client connected in %s mode\n", mode)
+	fmt.Printf("New client: %s\n", mode)
+
+	go clientWriter(c)
 }
+
+func clientWriter(c *Client) {
+	for ev := range c.send {
+		err := binary.Write(c.conn, binary.LittleEndian, ev)
+		if err != nil {
+			c.conn.Close()
+			return
+		}
+	}
+}
+
+func broadcast(ev WireEvent) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	for _, c := range clients {
+		select {
+		case c.send <- ev:
+		default:
+			// drop slow client
+		}
+	}
+}
+
+func keyboardReader(rootKbd *input.RealKeyboard) {
+	for {
+		ev, err := rootKbd.ReadNextInput()
+		if err != nil {
+			continue
+		}
+
+		if ev.Type != input.EV_KEY {
+			continue
+		}
+
+		eventBus <- WireEvent{
+			Sec:   ev.Time.Sec,
+			Usec:  ev.Time.Usec,
+			Type:  ev.Type,
+			Code:  ev.Code,
+			Value: ev.Value,
+		}
+	}
+}
+
 func main() {
-	// 1. Open physical keyboard
+	// open keyboard
 	kbdPath, err := input.FindDevice("id:usb-0c45_USB_Wired_Keyboard-event-kbd")
 	if err != nil {
 		panic(err)
 	}
+
 	rootKbd, err := input.OpenKeyboard(kbdPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open device: %v\n", err)
-		os.Exit(1)
+		panic(err)
 	}
 	defer rootKbd.Close()
 
@@ -71,84 +139,63 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	for {
-		pressed, err := rootKbd.GetPressedKeys()
-		if err != nil {
-			panic(err)
-		}
 
-		if len(pressed) == 0 {
-			break
-		}
-		fmt.Printf("release all keys before starting: %v\n", pressed)
-		for {
-			ev, err := rootKbd.ReadNextInput()
-			if err != nil {
-				panic(err)
-			}
-			if ev.Value == 0 {
-				break
-			}
-		}
+	// clear stuck keys (simple + safe)
+	pressed, _ := rootKbd.GetPressedKeys()
+	for _, k := range pressed {
+		vKb.SendEvent(input.EV_KEY, k, 0)
 	}
+	vKb.Sync()
+
 	err = rootKbd.Grab()
 	if err != nil {
 		panic(err)
 	}
-	println("started")
+
+	fmt.Println("started")
+
+	// socket server
 	go startSocketServer()
 	defer closeConnection()
-	var ev input.InputEvent
-	var ctrlPressed bool
-	for {
-		ev, err = rootKbd.ReadNextInput()
-		if err != nil {
-			panic(err)
-		}
 
-		if ev.Type != input.EV_KEY {
+	// input reader
+	go keyboardReader(rootKbd)
+
+	// event processor
+	for ev := range eventBus {
+		if shouldBlock(ev) {
 			continue
 		}
-		if ev.Code == input.KEY_LEFTCTRL {
-			ctrlPressed = ev.Value == 1
-		}
-		if ev.Code == input.KEY_ESC && ctrlPressed {
-			os.Exit(5)
-		}
-		isBlocked := false
-		clientsMu.Lock()
-		for _, c := range clients {
-			// Set a very short deadline (2ms) so we don't lag the hardware
-			c.conn.SetDeadline(time.Now().Add(2 * time.Millisecond))
 
-			// Send the event
-			_, err := fmt.Fprintf(c.conn, "%d,%d,%d\n", ev.Type, ev.Code, ev.Value)
-			if err != nil {
-				c.conn.Close()
-			} else if c.mode == ModeBlocking {
-				resp := make([]byte, 1)
-				_, err := c.conn.Read(resp)
-				if err == nil && resp[0] == '1' {
-					isBlocked = true
-				}
-			}
-		}
-		clientsMu.Unlock()
-
-		if !isBlocked {
-			vKb.SendEvent(ev.Type, ev.Code, ev.Value)
-			vKb.Sync()
-		}
+		vKb.SendEvent(ev.Type, ev.Code, ev.Value)
+		vKb.Sync()
 	}
 }
+func shouldBlock(ev WireEvent) bool {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
 
-// func main() {
-// 	// id:usb-0c45_USB_Wired_Keyboard-event-kbd
-// 	// id:usb-04d9_USB_Gaming_Mouse-event-mouse
-// 	// id:usb-04d9_USB_Gaming_Mouse-if01-event-kbd
-// 	kbd, err := input.FindDevice("id:usb-0c45_USB_Wired_Keyboard-event-kbd")
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	kbd.Press()
-// }
+	block := false
+
+	for _, c := range clients {
+		if c.mode != ModeBlocking {
+			continue
+		}
+
+		select {
+		case c.send <- ev:
+		default:
+		}
+
+		c.conn.SetReadDeadline(time.Now().Add(2 * time.Millisecond))
+
+		resp := make([]byte, 1)
+		_, err := c.conn.Read(resp)
+
+		if err == nil && resp[0] == '1' {
+			block = true
+		}
+	}
+
+	return block
+}
