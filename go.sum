@@ -2,5 +2,13 @@ github.com/rsa17826/go-input-lib v0.0.6 h1:M78e2jmQOvz6hvByxnjtJ9jb6qMfImfTOaFw0
 github.com/rsa17826/go-input-lib v0.0.6/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
 github.com/rsa17826/go-input-lib v0.0.7 h1:2jQWaW0omhFEzVCq2AsM+4nCsWekXy7DN6vX7znpuhA=
 github.com/rsa17826/go-input-lib v0.0.7/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
+github.com/rsa17826/go-input-lib v0.0.8 h1:wywR8Eecbbj8qsvBcgNsaQFcaIXUqooEgho1k14VD8E=
+github.com/rsa17826/go-input-lib v0.0.8/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
+github.com/rsa17826/go-input-lib v0.0.9 h1:mIVyuJdReKpabGiyVxPNa0/FnpcGTqpU87YtjsiY8/0=
+github.com/rsa17826/go-input-lib v0.0.9/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
+github.com/rsa17826/go-input-lib v0.0.10 h1:ZVL+mkJs0P0GdIuQTzUbAvDYe+G3QuVk3fO142PhBOA=
+github.com/rsa17826/go-input-lib v0.0.10/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
+github.com/rsa17826/go-input-lib v0.0.11 h1:Py6BZXLelxUNoVI6X93Hr5wUBc4V3yDxf0Ai4P/aq4k=
+github.com/rsa17826/go-input-lib v0.0.11/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
 golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
 golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=

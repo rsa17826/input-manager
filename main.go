@@ -66,21 +66,46 @@ func main() {
 		os.Exit(1)
 	}
 	defer rootKbd.Close()
-	err = rootKbd.Grab()
-	if err != nil {
-		panic(err)
-	}
 
 	vKb, err := input.CreateVirtualKeyboard("root kbd")
 	if err != nil {
 		panic(err)
 	}
+	for {
+		pressed, err := rootKbd.GetPressedKeys()
+		if err != nil {
+			panic(err)
+		}
+
+		if len(pressed) == 0 {
+			break
+		}
+		fmt.Printf("release all keys before starting: %v\n", pressed)
+		for {
+			ev, err := rootKbd.ReadNextInput()
+			if err != nil {
+				panic(err)
+			}
+			if ev.Value == 0 {
+				break
+			}
+		}
+	}
+	err = rootKbd.Grab()
+	if err != nil {
+		panic(err)
+	}
+	println("started")
 	go startSocketServer()
 	defer closeConnection()
 	var ev input.InputEvent
 	var ctrlPressed bool
 	for {
 		ev, err = rootKbd.ReadNextInput()
+		if err != nil {
+			panic(err)
+		}
+
 		if ev.Type != input.EV_KEY {
 			continue
 		}
@@ -89,9 +114,6 @@ func main() {
 		}
 		if ev.Code == input.KEY_ESC && ctrlPressed {
 			os.Exit(5)
-		}
-		if err != nil {
-			panic(err)
 		}
 		isBlocked := false
 		clientsMu.Lock()
