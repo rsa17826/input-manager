@@ -1,0 +1,4 @@
+github.com/rsa17826/go-input-lib v0.0.6 h1:M78e2jmQOvz6hvByxnjtJ9jb6qMfImfTOaFw0Rf63pU=
+github.com/rsa17826/go-input-lib v0.0.6/go.mod h1:+nUmviXztY9e6S0X7h/vaBJnC06cf5JaH08JiaEht+w=
+golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
+golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
