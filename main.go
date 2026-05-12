@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
 
@@ -29,10 +28,7 @@ func main() {
 	}
 	var ev input.InputEvent
 	for {
-		if err := binary.Read(rootKbd, binary.NativeEndian, &ev); err != nil {
-			fmt.Fprintf(os.Stderr, "read error: %v\n", err)
-			return
-		}
+		ev, err = rootKbd.ReadNextInput()
 		if ev.Type != input.EV_KEY {
 			continue
 		}
