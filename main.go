@@ -1,12 +1,58 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"os"
+	"strings"
+	"sync"
 
 	input "github.com/rsa17826/go-input-lib"
 )
 
+type Client struct {
+	conn net.Conn
+	mode string
+}
+
+const (
+	ModePassthrough = "LISTEN" // Just wants a copy
+	ModeBlocking    = "FILTER" // Wants to intercept
+)
+
+var (
+	clients    []*Client
+	clientsMu  sync.Mutex
+	socketPath = "/tmp/kbd_manager.sock"
+)
+
+func startSocketServer() {
+	os.Remove(socketPath)
+	l, err := net.Listen("unix", socketPath)
+	if err != nil {
+		panic(err)
+	}
+	for {
+		conn, _ := l.Accept()
+		go handleNewConnection(conn)
+	}
+}
+func closeConnection() {
+	os.Remove(socketPath)
+}
+
+func handleNewConnection(conn net.Conn) {
+	// First line from client should be "LISTEN" or "FILTER"
+	mode, _ := bufio.NewReader(conn).ReadString('\n')
+	mode = strings.TrimSpace(mode)
+
+	clientsMu.Lock()
+	clients = append(clients, &Client{conn: conn, mode: mode})
+	clientsMu.Unlock()
+
+	fmt.Printf("New client connected in %s mode\n", mode)
+}
 func main() {
 	// 1. Open physical keyboard
 	kbdPath, err := input.FindDevice("id:usb-0c45_USB_Wired_Keyboard-event-kbd")
@@ -28,6 +74,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	go startSocketServer()
+	defer closeConnection()
 	var ev input.InputEvent
 	var ctrlPressed bool
 	for {
@@ -44,14 +92,27 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		// --- LOGIC GATE ---
-		if shouldBlock(event) {
-			// Notify blocking macro scripts via socket
-			// DO NOT write to vKb
-		} else {
-			// Also notify passthrough scripts (Input Display)
+		isBlocked := false
+		clientsMu.Lock()
+		for _, c := range clients {
+			if c.mode == ModeBlocking {
+				// Send event and wait for 1 byte response (0=pass, 1=block)
+				fmt.Fprintf(c.conn, "%d,%d,%d\n", ev.Type, ev.Code, ev.Value)
+
+				resp := make([]byte, 1)
+				c.conn.Read(resp)
+				if resp[0] == '1' {
+					isBlocked = true
+				}
+			} else {
+				// Passthrough: Just fire and move on
+				fmt.Fprintf(c.conn, "%d,%d,%d\n", ev.Type, ev.Code, ev.Value)
+			}
+		}
+		clientsMu.Unlock()
+
+		if !isBlocked {
 			vKb.SendEvent(ev.Type, ev.Code, ev.Value)
-			notifyPassthrough(event)
 		}
 	}
 }
