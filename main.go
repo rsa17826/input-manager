@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	input "github.com/rsa17826/go-input-lib"
 )
@@ -95,24 +96,26 @@ func main() {
 		isBlocked := false
 		clientsMu.Lock()
 		for _, c := range clients {
-			if c.mode == ModeBlocking {
-				// Send event and wait for 1 byte response (0=pass, 1=block)
-				fmt.Fprintf(c.conn, "%d,%d,%d\n", ev.Type, ev.Code, ev.Value)
+			// Set a very short deadline (2ms) so we don't lag the hardware
+			c.conn.SetDeadline(time.Now().Add(2 * time.Millisecond))
 
+			// Send the event
+			_, err := fmt.Fprintf(c.conn, "%d,%d,%d\n", ev.Type, ev.Code, ev.Value)
+			if err != nil {
+				c.conn.Close()
+			} else if c.mode == ModeBlocking {
 				resp := make([]byte, 1)
-				c.conn.Read(resp)
-				if resp[0] == '1' {
+				_, err := c.conn.Read(resp)
+				if err == nil && resp[0] == '1' {
 					isBlocked = true
 				}
-			} else {
-				// Passthrough: Just fire and move on
-				fmt.Fprintf(c.conn, "%d,%d,%d\n", ev.Type, ev.Code, ev.Value)
 			}
 		}
 		clientsMu.Unlock()
 
 		if !isBlocked {
 			vKb.SendEvent(ev.Type, ev.Code, ev.Value)
+			vKb.Sync()
 		}
 	}
 }
