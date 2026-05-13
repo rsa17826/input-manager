@@ -14,10 +14,10 @@ import (
 )
 
 type Client struct {
-	conn      net.Conn
-	mode      string
-	send      chan WireEvent
-	blockResp chan bool
+	conn net.Conn
+	mode string
+	send chan WireEvent
+	dead bool
 }
 
 type WireEvent struct {
@@ -63,9 +63,16 @@ func handleNewConnection(conn net.Conn) {
 	mode, _ := bufio.NewReader(conn).ReadString('\n')
 	mode = strings.TrimSpace(mode)
 
+	if mode != ModePassthrough && mode != ModeBlocking {
+		fmt.Printf("Unknown mode %q, closing connection\n", mode)
+		conn.Close()
+		return
+	}
+
 	c := &Client{
 		conn: conn,
 		mode: mode,
+		// send channel is only used by LISTEN clients
 		send: make(chan WireEvent, 256),
 	}
 
@@ -75,10 +82,23 @@ func handleNewConnection(conn net.Conn) {
 
 	fmt.Printf("New client: %s\n", mode)
 
-	go clientWriter(c)
+	if mode == ModePassthrough {
+		// LISTEN clients: async writer goroutine drains the channel.
+		// When the goroutine exits (write error = client gone), mark dead.
+		go func() {
+			listenWriter(c)
+			clientsMu.Lock()
+			c.dead = true
+			clientsMu.Unlock()
+			fmt.Printf("LISTEN client disconnected\n")
+		}()
+	}
+	// FILTER clients have no writer goroutine; the event loop writes to them
+	// directly and synchronously so it can read the block/allow response.
 }
 
-func clientWriter(c *Client) {
+// listenWriter drains the send channel and writes events to a LISTEN client.
+func listenWriter(c *Client) {
 	for ev := range c.send {
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
@@ -88,17 +108,27 @@ func clientWriter(c *Client) {
 	}
 }
 
+// broadcast sends ev to all live LISTEN clients, dropping slow ones.
 func broadcast(ev WireEvent) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
+	live := clients[:0]
 	for _, c := range clients {
+		if c.dead {
+			continue
+		}
+		live = append(live, c)
+		if c.mode != ModePassthrough {
+			continue
+		}
 		select {
 		case c.send <- ev:
 		default:
-			// drop slow client
+			// drop slow client; it will be cleaned up on next write error
 		}
 	}
+	clients = live
 }
 
 func keyboardReader(rootKbd *input.RealKeyboard) {
@@ -123,7 +153,6 @@ func keyboardReader(rootKbd *input.RealKeyboard) {
 }
 
 func main() {
-	// open keyboard
 	kbdPath, err := input.FindDevice("id:usb-0c45_USB_Wired_Keyboard-event-kbd")
 	if err != nil {
 		panic(err)
@@ -140,12 +169,26 @@ func main() {
 		panic(err)
 	}
 
-	// clear stuck keys (simple + safe)
-	pressed, _ := rootKbd.GetPressedKeys()
-	for _, k := range pressed {
-		vKb.SendEvent(input.EV_KEY, k, 0)
+	for {
+		pressed, err := rootKbd.GetPressedKeys()
+		if err != nil {
+			panic(err)
+		}
+
+		if len(pressed) == 0 {
+			break
+		}
+		fmt.Printf("release all keys before starting: %v\n", pressed)
+		for {
+			ev, err := rootKbd.ReadNextInput()
+			if err != nil {
+				panic(err)
+			}
+			if ev.Value == 0 {
+				break
+			}
+		}
 	}
-	vKb.Sync()
 
 	err = rootKbd.Grab()
 	if err != nil {
@@ -154,48 +197,75 @@ func main() {
 
 	fmt.Println("started")
 
-	// socket server
 	go startSocketServer()
 	defer closeConnection()
 
-	// input reader
 	go keyboardReader(rootKbd)
 
-	// event processor
 	for ev := range eventBus {
-		if shouldBlock(ev) {
-			continue
-		}
+		blocked := filterClients(ev)
 
-		vKb.SendEvent(ev.Type, ev.Code, ev.Value)
-		vKb.Sync()
+		// LISTEN clients always receive events, even blocked ones, so they
+		// see the full key stream regardless of what filters do.
+		broadcast(ev)
+
+		if !blocked {
+			vKb.SendEvent(ev.Type, ev.Code, ev.Value)
+			vKb.Sync()
+		}
 	}
 }
-func shouldBlock(ev WireEvent) bool {
+
+// filterClients sends ev directly and synchronously to every live FILTER
+// client and waits up to 5 ms for each to reply.  Returns true if any
+// client wants the event blocked.
+//
+// Why direct write instead of c.send / listenWriter?
+// Because we need to guarantee the bytes are on the wire *before* we call
+// Read for the response.  A buffered channel + separate goroutine gives no
+// such guarantee within the deadline window.
+func filterClients(ev WireEvent) bool {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
 	block := false
+	live := clients[:0]
 
 	for _, c := range clients {
+		if c.dead {
+			continue
+		}
+		live = append(live, c)
+
 		if c.mode != ModeBlocking {
 			continue
 		}
 
-		select {
-		case c.send <- ev:
-		default:
+		// Write the event directly (sync, not via channel).
+		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
+		err := binary.Write(c.conn, binary.LittleEndian, ev)
+		if err != nil {
+			fmt.Printf("FILTER client write error: %v - removing\n", err)
+			c.conn.Close()
+			c.dead = true
+			continue
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(2 * time.Millisecond))
-
+		// Read the 1-byte response: '1' = block, anything else = pass.
+		c.conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
 		resp := make([]byte, 1)
-		_, err := c.conn.Read(resp)
+		_, err = c.conn.Read(resp)
+		if err != nil {
+			// timeout or disconnect; treat as "pass" but keep the client
+			// (a slow script shouldn't kill the connection on one miss)
+			continue
+		}
 
-		if err == nil && resp[0] == '1' {
+		if resp[0] == '1' {
 			block = true
 		}
 	}
 
+	clients = live
 	return block
 }
