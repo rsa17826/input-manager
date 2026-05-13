@@ -153,18 +153,32 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	mousePath, err := input.FindDevice("id:usb-04d9_USB_Gaming_Mouse-event-mouse")
+	if err != nil {
+		panic(err)
+	}
 
 	rootKbd, err := input.OpenKeyboard(kbdPath)
 	if err != nil {
 		panic(err)
 	}
 	defer rootKbd.Close()
+	rootMouse, err := input.OpenKeyboard(mousePath)
+	if err != nil {
+		panic(err)
+	}
+	defer rootMouse.Close()
 
-	vKb, err := input.CreateVirtualKeyboard("root kbd")
+	vkb, err := input.CreateVirtualKeyboard("vRoot kbd")
+	if err != nil {
+		panic(err)
+	}
+	vmouuse, err := input.CreateVirtualMouse("vRoot mouse")
 	if err != nil {
 		panic(err)
 	}
 
+	// TODO make check for mouse too
 	for {
 		pressed, err := rootKbd.GetPressedKeys()
 		if err != nil {
@@ -190,6 +204,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	err = rootMouse.Grab()
+	if err != nil {
+		panic(err)
+	}
 
 	fmt.Println("started")
 
@@ -206,8 +224,8 @@ func main() {
 		broadcast(ev)
 
 		if !blocked {
-			vKb.SendEvent(ev.Type, ev.Code, ev.Value)
-			vKb.Sync()
+			vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+			vkb.Sync()
 		}
 	}
 }
