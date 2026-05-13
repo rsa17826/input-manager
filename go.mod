@@ -1,4 +1,4 @@
-module github.com/rsa17826/go-ahk
+module github.com/rsa17826/input-manager
 
 go 1.26.2
 
