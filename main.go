@@ -194,9 +194,11 @@ func waitRelease(dev interface {
 func main() {
 	var kbdIDs []string
 	var mouseIDs []string
+	var disablePanicButton bool
 	argparse.ParseArgs([]argparse.ArgumentData{
 		{Keys: []string{"keyboard", "k"}, AfterCount: 1, VarArgs: true, Target: &kbdIDs, Description: "the keyboards to hook", AllowDupes: true},
 		{Keys: []string{"mouse", "m"}, AfterCount: 1, VarArgs: true, Target: &mouseIDs, Description: "the mice to hook", AllowDupes: true},
+		{Keys: []string{"disablePanicButton"}, AfterCount: 0, VarArgs: false, Target: &disablePanicButton, Description: "disables the ability to use ctrl+esc to exit the app even when the keyboard is locked", AllowDupes: false},
 	})
 
 	var kbds []*input.RealKeyboard
@@ -255,12 +257,14 @@ func main() {
 
 	var ctrlPressed bool
 	for ev := range eventBus {
-		if ev.Type == input.EV_KEY {
-			if ev.Code == input.KEY_LEFTCTRL {
-				ctrlPressed = ev.Value == 1
-			}
-			if ev.Code == input.KEY_ESC && ctrlPressed {
-				os.Exit(5)
+		if !disablePanicButton {
+			if ev.Type == input.EV_KEY {
+				if ev.Code == input.KEY_LEFTCTRL {
+					ctrlPressed = ev.Value == 1
+				}
+				if ev.Code == input.KEY_ESC && ctrlPressed {
+					os.Exit(5)
+				}
 			}
 		}
 		blocked := filterClients(ev)
