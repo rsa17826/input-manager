@@ -25,7 +25,7 @@
         packages = {
           # The actual package
           default = pkgs.buildGoModule {
-            pname = "go-autoclicker";
+            pname = "input-manager";
             version = "1";
             src = ./.;
             vendorHash = "sha256-PP8AcYMmWp8tgpHXoabp52eauUMYQltETQOpq2iAnhQ=";
