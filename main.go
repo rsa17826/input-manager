@@ -132,9 +132,9 @@ func broadcast(ev WireEvent) {
 	clients = live
 }
 
-func keyboardReader(rootKbd *input.RealKeyboard) {
+func keyboardReader(kbd *input.RealKeyboard) {
 	for {
-		ev, err := rootKbd.ReadNextInput()
+		ev, err := kbd.ReadNextInput()
 		if err != nil {
 			continue
 		}
@@ -149,9 +149,9 @@ func keyboardReader(rootKbd *input.RealKeyboard) {
 		}
 	}
 }
-func mouseReader(rootMouse *input.RealMouse) {
+func mouseReader(mouse *input.RealMouse) {
 	for {
-		ev, err := rootMouse.ReadNextInput()
+		ev, err := mouse.ReadNextInput()
 		if err != nil {
 			continue
 		}
@@ -195,8 +195,8 @@ func main() {
 	var kbdIDs []string
 	var mouseIDs []string
 	argparse.ParseArgs([]argparse.ArgumentData{
-		{Keys: []string{"keyboard", "k"}, AfterCount: 1, VarArgs: true, Target: &kbdIDs, Description: "the keyboards to hook"},
-		{Keys: []string{"mouse", "m"}, AfterCount: 1, VarArgs: true, Target: &mouseIDs, Description: "the mice to hook"},
+		{Keys: []string{"keyboard", "k"}, AfterCount: 1, VarArgs: true, Target: &kbdIDs, Description: "the keyboards to hook", AllowDupes: true},
+		{Keys: []string{"mouse", "m"}, AfterCount: 1, VarArgs: true, Target: &mouseIDs, Description: "the mice to hook", AllowDupes: true},
 	})
 
 	var kbds []*input.RealKeyboard
