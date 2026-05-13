@@ -238,13 +238,22 @@ func main() {
 	go keyboardReader(rootKbd)
 	go mouseReader(rootMouse)
 
+	var ctrlPressed bool
 	for ev := range eventBus {
+		if ev.Type == input.EV_KEY {
+			if ev.Code == input.KEY_LEFTCTRL {
+				ctrlPressed = ev.Value == 1
+			}
+			if ev.Code == input.KEY_ESC && ctrlPressed {
+				os.Exit(5)
+			}
+		}
 		blocked := filterClients(ev)
 		broadcast(ev)
 
 		if !blocked {
 			switch ev.Type {
-			case 1: // EV_KEY (Keyboard & Mouse Buttons)
+			case input.EV_KEY:
 				if ev.Code >= 256 {
 					vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
 					vmouse.Sync()
@@ -253,12 +262,7 @@ func main() {
 					vkb.Sync()
 				}
 
-			case 2: // EV_REL (Mouse Movement & Wheel)
-				// If you want to see the wheel in your console:
-				if ev.Code == 8 { // 8 is the standard code for REL_WHEEL
-					fmt.Printf("Wheel Move: %d\n", ev.Value)
-				}
-
+			case input.EV_REL:
 				vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
 				vmouse.Sync()
 
@@ -270,14 +274,6 @@ func main() {
 	}
 }
 
-// filterClients sends ev directly and synchronously to every live FILTER
-// client and waits up to 5 ms for each to reply.  Returns true if any
-// client wants the event blocked.
-//
-// Why direct write instead of c.send / listenWriter?
-// Because we need to guarantee the bytes are on the wire *before* we call
-// Read for the response.  A buffered channel + separate goroutine gives no
-// such guarantee within the deadline window.
 func filterClients(ev WireEvent) bool {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
@@ -295,7 +291,6 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		// Write the event directly (sync, not via channel).
 		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
