@@ -138,10 +138,6 @@ func keyboardReader(rootKbd *input.RealKeyboard) {
 			continue
 		}
 
-		if ev.Type != input.EV_KEY {
-			continue
-		}
-
 		eventBus <- WireEvent{
 			Sec:   ev.Time.Sec,
 			Usec:  ev.Time.Usec,
