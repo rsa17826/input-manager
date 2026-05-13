@@ -240,38 +240,31 @@ func main() {
 
 	for ev := range eventBus {
 		blocked := filterClients(ev)
-
-		// LISTEN clients always receive events, even blocked ones, so they
-		// see the full key stream regardless of what filters do.
 		broadcast(ev)
 
 		if !blocked {
-			// EV_KEY (1) can be both keys and mouse buttons
-			println(ev.Code)
 			switch ev.Type {
-			case 1:
-				{
-					// Mouse buttons start at BTN_MISC (0x100 / 256)
-					// but standard mouse buttons (Left, Right, Middle) are 272-274
-					if ev.Code >= 256 {
-						vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
-						vmouse.Sync()
-					} else {
-						vkb.SendEvent(ev.Type, ev.Code, ev.Value)
-						vkb.Sync()
-					}
-				}
-			case 2:
-				{ // EV_REL is relative movement (Mouse)
+			case 1: // EV_KEY (Keyboard & Mouse Buttons)
+				if ev.Code >= 256 {
 					vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
 					vmouse.Sync()
-				}
-			default:
-				{
-					// Default to keyboard for system syncs, etc.
+				} else {
 					vkb.SendEvent(ev.Type, ev.Code, ev.Value)
 					vkb.Sync()
 				}
+
+			case 2: // EV_REL (Mouse Movement & Wheel)
+				// If you want to see the wheel in your console:
+				if ev.Code == 8 { // 8 is the standard code for REL_WHEEL
+					fmt.Printf("Wheel Move: %d\n", ev.Value)
+				}
+
+				vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
+				vmouse.Sync()
+
+			default:
+				vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+				vkb.Sync()
 			}
 		}
 	}
