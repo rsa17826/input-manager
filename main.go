@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -15,10 +16,11 @@ import (
 )
 
 type Client struct {
-	conn net.Conn
-	mode string
-	send chan WireEvent
-	dead bool
+	conn   net.Conn
+	reader *bufio.Reader
+	mode   string
+	send   chan WireEvent
+	dead   bool
 }
 
 type WireEvent struct {
@@ -61,7 +63,14 @@ func closeConnection() {
 }
 
 func handleNewConnection(conn net.Conn) {
-	mode, _ := bufio.NewReader(conn).ReadString('\n')
+	reader := bufio.NewReader(conn)
+
+	mode, err := reader.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return
+	}
+
 	mode = strings.TrimSpace(mode)
 
 	if mode != ModePassthrough && mode != ModeBlocking {
@@ -71,10 +80,10 @@ func handleNewConnection(conn net.Conn) {
 	}
 
 	c := &Client{
-		conn: conn,
-		mode: mode,
-		// send channel is only used by LISTEN clients
-		send: make(chan WireEvent, 256),
+		conn:   conn,
+		reader: reader,
+		mode:   mode,
+		send:   make(chan WireEvent, 256),
 	}
 
 	clientsMu.Lock()
@@ -84,18 +93,16 @@ func handleNewConnection(conn net.Conn) {
 	fmt.Printf("New client: %s\n", mode)
 
 	if mode == ModePassthrough {
-		// LISTEN clients: async writer goroutine drains the channel.
-		// When the goroutine exits (write error = client gone), mark dead.
 		go func() {
 			listenWriter(c)
+
 			clientsMu.Lock()
 			c.dead = true
 			clientsMu.Unlock()
+
 			fmt.Printf("LISTEN client disconnected\n")
 		}()
 	}
-	// FILTER clients have no writer goroutine; the event loop writes to them
-	// directly and synchronously so it can read the block/allow response.
 }
 
 // listenWriter drains the send channel and writes events to a LISTEN client.
@@ -136,6 +143,7 @@ func keyboardReader(kbd *input.RealKeyboard) {
 	for {
 		ev, err := kbd.ReadNextInput()
 		if err != nil {
+			fmt.Println("KBD Read Error:", err)
 			continue
 		}
 
@@ -153,6 +161,7 @@ func mouseReader(mouse *input.RealMouse) {
 	for {
 		ev, err := mouse.ReadNextInput()
 		if err != nil {
+			fmt.Println("MOUSE Read Error:", err)
 			continue
 		}
 
@@ -322,7 +331,7 @@ func filterClients(ev WireEvent) bool {
 		// Read the 1-byte response: '1' = block, anything else = pass.
 		c.conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
 		resp := make([]byte, 1)
-		_, err = c.conn.Read(resp)
+		_, err = io.ReadFull(c.reader, resp)
 		if err != nil {
 			// timeout or disconnect; treat as "pass" but keep the client
 			// (a slow script shouldn't kill the connection on one miss)
