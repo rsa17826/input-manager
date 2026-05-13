@@ -147,6 +147,22 @@ func keyboardReader(rootKbd *input.RealKeyboard) {
 		}
 	}
 }
+func mouseReader(rootKbd *input.RealMouse) {
+	for {
+		ev, err := rootKbd.ReadNextInput()
+		if err != nil {
+			continue
+		}
+
+		eventBus <- WireEvent{
+			Sec:   ev.Time.Sec,
+			Usec:  ev.Time.Usec,
+			Type:  ev.Type,
+			Code:  ev.Code,
+			Value: ev.Value,
+		}
+	}
+}
 func waitRelease(dev interface {
 	GetPressedKeys() ([]uint16, error)
 	ReadNextInput() (input.InputEvent, error)
@@ -220,6 +236,7 @@ func main() {
 	defer closeConnection()
 
 	go keyboardReader(rootKbd)
+	go mouseReader(rootMouse)
 
 	for ev := range eventBus {
 		blocked := filterClients(ev)
@@ -230,6 +247,7 @@ func main() {
 
 		if !blocked {
 			// EV_KEY (1) can be both keys and mouse buttons
+			println(ev.Code)
 			switch ev.Type {
 			case 1:
 				{
