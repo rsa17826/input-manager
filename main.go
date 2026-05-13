@@ -147,7 +147,31 @@ func keyboardReader(rootKbd *input.RealKeyboard) {
 		}
 	}
 }
+func waitRelease(dev interface {
+	GetPressedKeys() ([]uint16, error)
+	ReadNextInput() (input.InputEvent, error)
+}) {
+	for {
+		pressed, err := dev.GetPressedKeys()
+		if err != nil {
+			panic(err)
+		}
+		if len(pressed) == 0 {
+			break
+		}
 
+		fmt.Printf("Release all buttons/keys: %v\n", pressed)
+		for {
+			ev, err := dev.ReadNextInput()
+			if err != nil {
+				panic(err)
+			}
+			if ev.Value == 0 {
+				break
+			}
+		}
+	}
+}
 func main() {
 	kbdPath, err := input.FindDevice("id:usb-0c45_USB_Wired_Keyboard-event-kbd")
 	if err != nil {
@@ -178,31 +202,8 @@ func main() {
 		panic(err)
 	}
 
-	// TODO make check for mouse too
-	devices := []*input.RealDev{rootKbd, rootMouse}
-	for _, dev := range devices {
-		for {
-			pressed, err := dev.GetPressedKeys()
-			if err != nil {
-				panic(err)
-			}
-
-			if len(pressed) == 0 {
-				break
-			}
-
-			fmt.Printf("Release all buttons/keys on %v: %v\n", dev, pressed)
-			for {
-				ev, err := dev.ReadNextInput()
-				if err != nil {
-					panic(err)
-				}
-				if ev.Value == 0 {
-					break
-				}
-			}
-		}
-	}
+	waitRelease(rootKbd)
+	waitRelease(rootMouse)
 
 	err = rootKbd.Grab()
 	if err != nil {
