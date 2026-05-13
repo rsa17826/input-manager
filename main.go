@@ -163,7 +163,7 @@ func main() {
 		panic(err)
 	}
 	defer rootKbd.Close()
-	rootMouse, err := input.OpenKeyboard(mousePath)
+	rootMouse, err := input.OpenMouse(mousePath)
 	if err != nil {
 		panic(err)
 	}
@@ -179,23 +179,27 @@ func main() {
 	}
 
 	// TODO make check for mouse too
-	for {
-		pressed, err := rootKbd.GetPressedKeys()
-		if err != nil {
-			panic(err)
-		}
-
-		if len(pressed) == 0 {
-			break
-		}
-		fmt.Printf("release all keys before starting: %v\n", pressed)
+	devices := []*input.RealDev{rootKbd, rootMouse}
+	for _, dev := range devices {
 		for {
-			ev, err := rootKbd.ReadNextInput()
+			pressed, err := dev.GetPressedKeys()
 			if err != nil {
 				panic(err)
 			}
-			if ev.Value == 0 {
+
+			if len(pressed) == 0 {
 				break
+			}
+
+			fmt.Printf("Release all buttons/keys on %v: %v\n", dev, pressed)
+			for {
+				ev, err := dev.ReadNextInput()
+				if err != nil {
+					panic(err)
+				}
+				if ev.Value == 0 {
+					break
+				}
 			}
 		}
 	}
