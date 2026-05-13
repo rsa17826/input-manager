@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	argparse "github.com/rsa17826/go-arg-lib"
 	input "github.com/rsa17826/go-input-lib"
 )
 
@@ -144,12 +145,13 @@ func keyboardReader(rootKbd *input.RealKeyboard) {
 			Type:  ev.Type,
 			Code:  ev.Code,
 			Value: ev.Value,
+			// Device:
 		}
 	}
 }
-func mouseReader(rootKbd *input.RealMouse) {
+func mouseReader(rootMouse *input.RealMouse) {
 	for {
-		ev, err := rootKbd.ReadNextInput()
+		ev, err := rootMouse.ReadNextInput()
 		if err != nil {
 			continue
 		}
@@ -188,26 +190,34 @@ func waitRelease(dev interface {
 		}
 	}
 }
+
 func main() {
-	kbdPath, err := input.FindDevice("id:usb-0c45_USB_Wired_Keyboard-event-kbd")
-	if err != nil {
-		panic(err)
-	}
-	mousePath, err := input.FindDevice("id:usb-04d9_USB_Gaming_Mouse-event-mouse")
-	if err != nil {
-		panic(err)
+	var kbdIDs []string
+	var mouseIDs []string
+	argparse.ParseArgs([]argparse.ArgumentData{
+		{Keys: []string{"keyboard", "k"}, AfterCount: 1, VarArgs: true, Target: &kbdIDs, Description: "the keyboards to hook"},
+		{Keys: []string{"mouse", "m"}, AfterCount: 1, VarArgs: true, Target: &mouseIDs, Description: "the mice to hook"},
+	})
+
+	var kbds []*input.RealKeyboard
+	var mice []*input.RealMouse
+	for _, id := range kbdIDs {
+		kbd, err := input.FindAndOpenKeyboard(id)
+		kbds = append(kbds, kbd)
+		if err != nil {
+			panic(err)
+		}
+		defer kbd.Close()
 	}
 
-	rootKbd, err := input.OpenKeyboard(kbdPath)
-	if err != nil {
-		panic(err)
+	for _, id := range mouseIDs {
+		mouse, err := input.FindAndOpenMouse(id)
+		mice = append(mice, mouse)
+		if err != nil {
+			panic(err)
+		}
+		defer mouse.Close()
 	}
-	defer rootKbd.Close()
-	rootMouse, err := input.OpenMouse(mousePath)
-	if err != nil {
-		panic(err)
-	}
-	defer rootMouse.Close()
 
 	vkb, err := input.CreateVirtualKeyboard("vRoot kbd")
 	if err != nil {
@@ -217,26 +227,31 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
-	waitRelease(rootKbd)
-	waitRelease(rootMouse)
-
-	err = rootKbd.Grab()
-	if err != nil {
-		panic(err)
+	for _, kbd := range kbds {
+		waitRelease(kbd)
+		err = kbd.Grab()
+		if err != nil {
+			panic(err)
+		}
 	}
-	err = rootMouse.Grab()
-	if err != nil {
-		panic(err)
+	for _, mouse := range mice {
+		waitRelease(mouse)
+		err = mouse.Grab()
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	fmt.Println("started")
 
 	go startSocketServer()
 	defer closeConnection()
-
-	go keyboardReader(rootKbd)
-	go mouseReader(rootMouse)
+	for _, kbd := range kbds {
+		go keyboardReader(kbd)
+	}
+	for _, mouse := range mice {
+		go mouseReader(mouse)
+	}
 
 	var ctrlPressed bool
 	for ev := range eventBus {
