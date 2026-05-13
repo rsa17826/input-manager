@@ -197,7 +197,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	vmouuse, err := input.CreateVirtualMouse("vRoot mouse")
+	vmouse, err := input.CreateVirtualMouse("vRoot mouse")
 	if err != nil {
 		panic(err)
 	}
@@ -229,8 +229,32 @@ func main() {
 		broadcast(ev)
 
 		if !blocked {
-			vkb.SendEvent(ev.Type, ev.Code, ev.Value)
-			vkb.Sync()
+			// EV_KEY (1) can be both keys and mouse buttons
+			switch ev.Type {
+			case 1:
+				{
+					// Mouse buttons start at BTN_MISC (0x100 / 256)
+					// but standard mouse buttons (Left, Right, Middle) are 272-274
+					if ev.Code >= 256 {
+						vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
+						vmouse.Sync()
+					} else {
+						vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+						vkb.Sync()
+					}
+				}
+			case 2:
+				{ // EV_REL is relative movement (Mouse)
+					vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
+					vmouse.Sync()
+				}
+			default:
+				{
+					// Default to keyboard for system syncs, etc.
+					vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+					vkb.Sync()
+				}
+			}
 		}
 	}
 }
