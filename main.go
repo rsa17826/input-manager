@@ -319,7 +319,7 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
+		c.conn.SetWriteDeadline(time.Now().Add(15 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
 			fmt.Printf("FILTER client write error: %v - removing\n", err)
