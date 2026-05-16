@@ -321,7 +321,7 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		c.conn.SetWriteDeadline(time.Now().Add(150 * time.Millisecond))
+		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
 			fmt.Printf("FILTER client write error: %v - removing\n", err)
@@ -331,7 +331,7 @@ func filterClients(ev WireEvent) bool {
 		}
 
 		// Read the 1-byte response: '1' = block, anything else = pass.
-		c.conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
+		c.conn.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
 		resp := make([]byte, 1)
 		_, err = io.ReadFull(c.reader, resp)
 		if err != nil {
