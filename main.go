@@ -209,7 +209,9 @@ func main() {
 		{Keys: []string{"mouse", "m"}, AfterCount: 1, VarArgs: true, Target: &mouseIDs, Description: "the mice to hook", AllowDupes: true},
 		{Keys: []string{"disablePanicButton"}, AfterCount: 0, VarArgs: false, Target: &disablePanicButton, Description: "disables the ability to use ctrl+esc to exit the app even when the keyboard is locked", AllowDupes: false},
 	})
-
+	if len(kbdIDs) == 0 && len(mouseIDs) == 0 {
+		argparse.PrintHelpAndExit()
+	}
 	var kbds []*input.RealKeyboard
 	var mice []*input.RealMouse
 	for _, id := range kbdIDs {
@@ -319,7 +321,7 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		c.conn.SetWriteDeadline(time.Now().Add(15 * time.Millisecond))
+		c.conn.SetWriteDeadline(time.Now().Add(150 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
 			fmt.Printf("FILTER client write error: %v - removing\n", err)
