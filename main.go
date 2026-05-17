@@ -34,12 +34,21 @@ type WireEvent struct {
 const (
 	ModePassthrough = "LISTEN"
 	ModeBlocking    = "FILTER"
+	ModeInjection   = "INJECT"
 )
 
 var (
 	clients    []*Client
 	clientsMu  sync.Mutex
 	socketPath = "/tmp/kbd_manager.sock"
+
+	// Mutexes to make sure concurrent writing to virtual devices from
+	// main loop and inject loops doesn't cause raw layout corruption
+	vkbMu    sync.Mutex
+	vmouseMu sync.Mutex
+
+	vkb    *input.VirtualKeyboard
+	vmouse *input.VirtualMouse
 )
 
 var eventBus = make(chan WireEvent, 1024)
@@ -53,7 +62,10 @@ func startSocketServer() {
 	}
 
 	for {
-		conn, _ := l.Accept()
+		conn, err := l.Accept()
+		if err != nil {
+			continue
+		}
 		go handleNewConnection(conn)
 	}
 }
@@ -73,7 +85,7 @@ func handleNewConnection(conn net.Conn) {
 
 	mode = strings.TrimSpace(mode)
 
-	if mode != ModePassthrough && mode != ModeBlocking {
+	if mode != ModePassthrough && mode != ModeBlocking && mode != ModeInjection {
 		fmt.Printf("Unknown mode %q, closing connection\n", mode)
 		conn.Close()
 		return
@@ -90,22 +102,72 @@ func handleNewConnection(conn net.Conn) {
 	clients = append(clients, c)
 	clientsMu.Unlock()
 
-	fmt.Printf("New client: %s\n", mode)
+	fmt.Printf("New client context registered: %s\n", mode)
 
 	if mode == ModePassthrough {
 		go func() {
 			listenWriter(c)
-
 			clientsMu.Lock()
 			c.dead = true
 			clientsMu.Unlock()
-
 			fmt.Printf("LISTEN client disconnected\n")
+		}()
+	}
+
+	// Handle execution loop for client sending instructions down the pipeline
+	if mode == ModeInjection {
+		go func() {
+			handleInjectionReader(c)
+			clientsMu.Lock()
+			c.dead = true
+			clientsMu.Unlock()
+			fmt.Printf("INJECT client disconnected\n")
 		}()
 	}
 }
 
-// listenWriter drains the send channel and writes events to a LISTEN client.
+// handleInjectionReader reads WireEvents sent *from* an INJECT client and passes them to vdevs
+func handleInjectionReader(c *Client) {
+	defer c.conn.Close()
+	var ev WireEvent
+
+	for {
+		err := binary.Read(c.reader, binary.LittleEndian, &ev)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("INJECT connection read error: %v\n", err)
+			}
+			return
+		}
+
+		// Direct routing execution blocks mirrored cleanly from your main loop routing
+		switch ev.Type {
+		case input.EV_KEY:
+			if ev.Code >= 256 {
+				vmouseMu.Lock()
+				vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
+				vmouse.Sync()
+				vmouseMu.Unlock()
+			} else {
+				vkbMu.Lock()
+				vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+				vkb.Sync()
+				vkbMu.Unlock()
+			}
+		case input.EV_REL:
+			vmouseMu.Lock()
+			vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
+			vmouse.Sync()
+			vmouseMu.Unlock()
+		default:
+			vkbMu.Lock()
+			vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+			vkb.Sync()
+			vkbMu.Unlock()
+		}
+	}
+}
+
 func listenWriter(c *Client) {
 	for ev := range c.send {
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
@@ -116,7 +178,6 @@ func listenWriter(c *Client) {
 	}
 }
 
-// broadcast sends ev to all live LISTEN clients, dropping slow ones.
 func broadcast(ev WireEvent) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
@@ -133,7 +194,6 @@ func broadcast(ev WireEvent) {
 		select {
 		case c.send <- ev:
 		default:
-			// drop slow client; it will be cleaned up on next write error
 		}
 	}
 	clients = live
@@ -153,10 +213,10 @@ func keyboardReader(kbd *input.RealKeyboard) {
 			Type:  ev.Type,
 			Code:  ev.Code,
 			Value: ev.Value,
-			// Device:
 		}
 	}
 }
+
 func mouseReader(mouse *input.RealMouse) {
 	for {
 		ev, err := mouse.ReadNextInput()
@@ -174,6 +234,7 @@ func mouseReader(mouse *input.RealMouse) {
 		}
 	}
 }
+
 func waitRelease(dev interface {
 	GetPressedKeys() ([]uint16, error)
 	ReadNextInput() (input.InputEvent, error)
@@ -232,14 +293,16 @@ func main() {
 		defer mouse.Close()
 	}
 
-	vkb, err := input.CreateVirtualKeyboard("vRoot kbd")
+	var err error
+	vkb, err = input.CreateVirtualKeyboard("vRoot kbd")
 	if err != nil {
 		panic(err)
 	}
-	vmouse, err := input.CreateVirtualMouse("vRoot mouse")
+	vmouse, err = input.CreateVirtualMouse("vRoot mouse")
 	if err != nil {
 		panic(err)
 	}
+
 	for _, kbd := range kbds {
 		waitRelease(kbd)
 		err = kbd.Grab()
@@ -285,20 +348,28 @@ func main() {
 			switch ev.Type {
 			case input.EV_KEY:
 				if ev.Code >= 256 {
+					vmouseMu.Lock()
 					vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
 					vmouse.Sync()
+					vmouseMu.Unlock()
 				} else {
+					vkbMu.Lock()
 					vkb.SendEvent(ev.Type, ev.Code, ev.Value)
 					vkb.Sync()
+					vkbMu.Unlock()
 				}
 
 			case input.EV_REL:
+				vmouseMu.Lock()
 				vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
 				vmouse.Sync()
+				vmouseMu.Unlock()
 
 			default:
+				vkbMu.Lock()
 				vkb.SendEvent(ev.Type, ev.Code, ev.Value)
 				vkb.Sync()
+				vkbMu.Unlock()
 			}
 		}
 	}
@@ -330,13 +401,10 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		// Read the 1-byte response: '1' = block, anything else = pass.
 		c.conn.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
 		resp := make([]byte, 1)
 		_, err = io.ReadFull(c.reader, resp)
 		if err != nil {
-			// timeout or disconnect; treat as "pass" but keep the client
-			// (a slow script shouldn't kill the connection on one miss)
 			continue
 		}
 
