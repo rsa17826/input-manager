@@ -408,7 +408,7 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		if resp[0] == '1' {
+		if resp[0] == 1 {
 			block = true
 		}
 	}
