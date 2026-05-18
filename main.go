@@ -35,6 +35,7 @@ const (
 	ModePassthrough = "LISTEN"
 	ModeBlocking    = "FILTER"
 	ModeInjection   = "INJECT"
+	ModeVirtListen  = "LISTEN_VIRT" // receives events forwarded to virtual devices
 )
 
 var (
@@ -85,7 +86,7 @@ func handleNewConnection(conn net.Conn) {
 
 	mode = strings.TrimSpace(mode)
 
-	if mode != ModePassthrough && mode != ModeBlocking && mode != ModeInjection {
+	if mode != ModePassthrough && mode != ModeBlocking && mode != ModeInjection && mode != ModeVirtListen {
 		fmt.Printf("Unknown mode %q, closing connection\n", mode)
 		conn.Close()
 		return
@@ -104,13 +105,14 @@ func handleNewConnection(conn net.Conn) {
 
 	fmt.Printf("New client context registered: %s\n", mode)
 
-	if mode == ModePassthrough {
+	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
+	if mode == ModePassthrough || mode == ModeVirtListen {
 		go func() {
 			listenWriter(c)
 			clientsMu.Lock()
 			c.dead = true
 			clientsMu.Unlock()
-			fmt.Printf("LISTEN client disconnected\n")
+			fmt.Printf("%s client disconnected\n", mode)
 		}()
 	}
 
@@ -165,6 +167,9 @@ func handleInjectionReader(c *Client) {
 			vkb.Sync()
 			vkbMu.Unlock()
 		}
+
+		// Notify LISTEN_VIRT clients that this event reached the virtual device
+		broadcastVirt(ev)
 	}
 }
 
@@ -178,7 +183,8 @@ func listenWriter(c *Client) {
 	}
 }
 
-func broadcast(ev WireEvent) {
+// broadcastReal sends real input events to all LISTEN clients.
+func broadcastReal(ev WireEvent) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
@@ -197,6 +203,22 @@ func broadcast(ev WireEvent) {
 		}
 	}
 	clients = live
+}
+
+// broadcastVirt sends events that reached the virtual devices to all LISTEN_VIRT clients.
+func broadcastVirt(ev WireEvent) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	for _, c := range clients {
+		if c.dead || c.mode != ModeVirtListen {
+			continue
+		}
+		select {
+		case c.send <- ev:
+		default:
+		}
+	}
 }
 
 func keyboardReader(kbd *input.RealKeyboard) {
@@ -342,7 +364,7 @@ func main() {
 			}
 		}
 		blocked := filterClients(ev)
-		broadcast(ev)
+		broadcastReal(ev)
 
 		if !blocked {
 			switch ev.Type {
@@ -371,6 +393,7 @@ func main() {
 				vkb.Sync()
 				vkbMu.Unlock()
 			}
+			broadcastVirt(ev)
 		}
 	}
 }
