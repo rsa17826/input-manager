@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 type Client struct {
 	conn   net.Conn
 	reader *bufio.Reader
-	mode   string
+	mode   ServerMode
 	send   chan WireEvent
 	dead   bool
 }
@@ -62,15 +61,16 @@ func closeConnection() {
 }
 
 func handleNewConnection(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-
-	mode, err := reader.ReadString('\n')
+	// Allocate a 1-byte buffer to read the mode
+	buf := make([]byte, 1)
+	_, err := conn.Read(buf)
 	if err != nil {
 		conn.Close()
 		return
 	}
 
-	mode = strings.TrimSpace(mode)
+	// Convert the raw byte back into your ServerMode enum type
+	mode := ServerMode(buf[0])
 
 	if mode != ModePassthrough && mode != ModeBlocking && mode != ModeInjection && mode != ModeVirtListen {
 		fmt.Printf("Unknown mode %q, closing connection\n", mode)
@@ -80,8 +80,8 @@ func handleNewConnection(conn net.Conn) {
 
 	c := &Client{
 		conn:   conn,
-		reader: reader,
-		mode:   mode,
+		reader: bufio.NewReader(conn), // Keep the reader if you still need it later for data streams
+		mode:   mode,                  // This should now be typed as ServerMode in your Client struct
 		send:   make(chan WireEvent, 256),
 	}
 

@@ -2,7 +2,6 @@ package IMan
 
 import (
 	"encoding/binary"
-	"fmt"
 	"net"
 )
 
@@ -36,14 +35,19 @@ type ManagerConnection struct {
 	conn net.Conn
 }
 
-func Connect(mode ServerMode) *ManagerConnection {
+func Connect(mode ServerMode) (*ManagerConnection, error) {
 	conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
 	if err != nil {
-		panic(err)
+		return &ManagerConnection, err
 	}
 
-	fmt.Fprintf(conn, "%d\n", mode)
-	return &ManagerConnection{conn: conn}
+	// Send the mode directly as a single byte
+	_, err = conn.Write([]byte{byte(mode)})
+	if err != nil {
+		conn.Close()
+		return &ManagerConnection, err
+	}
+	return &ManagerConnection{conn: conn}, nil
 }
 func (self *ManagerConnection) Close() error {
 	return self.conn.Close()
