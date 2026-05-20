@@ -72,8 +72,8 @@ func handleNewConnection(conn net.Conn) {
 	// Convert the raw byte back into your ServerMode enum type
 	mode := ServerMode(buf[0])
 
-	if mode != ModePassthrough && mode != ModeBlocking && mode != ModeInjection && mode != ModeVirtListen {
-		fmt.Printf("Unknown mode %q, closing connection\n", mode)
+	if mode != ModeListen && mode != ModeBlocking && mode != ModeInjection && mode != ModeVirtListen {
+		fmt.Printf("Unknown mode %d, closing connection\n", int(mode))
 		conn.Close()
 		return
 	}
@@ -89,16 +89,16 @@ func handleNewConnection(conn net.Conn) {
 	clients = append(clients, c)
 	clientsMu.Unlock()
 
-	fmt.Printf("New client context registered: %s\n", mode)
+	fmt.Printf("New client context registered: %d\n", mode)
 
 	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
-	if mode == ModePassthrough || mode == ModeVirtListen {
+	if mode == ModeListen || mode == ModeVirtListen {
 		go func() {
 			listenWriter(c)
 			clientsMu.Lock()
 			c.dead = true
 			clientsMu.Unlock()
-			fmt.Printf("%s client disconnected\n", mode)
+			fmt.Printf("%d client disconnected\n", mode)
 		}()
 	}
 
@@ -180,7 +180,7 @@ func broadcastReal(ev WireEvent) {
 			continue
 		}
 		live = append(live, c)
-		if c.mode != ModePassthrough {
+		if c.mode != ModeListen {
 			continue
 		}
 		select {

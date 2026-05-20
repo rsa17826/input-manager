@@ -17,7 +17,7 @@ type WireEvent struct {
 type ServerMode int
 
 const (
-	ModePassthrough ServerMode = iota
+	ModeListen ServerMode = iota
 	ModeBlocking
 	ModeInjection
 	ModeVirtListen
