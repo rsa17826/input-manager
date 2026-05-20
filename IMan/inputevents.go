@@ -2,6 +2,7 @@ package IMan
 
 import (
 	"encoding/binary"
+	"io"
 	"net"
 )
 
@@ -54,4 +55,7 @@ func (self *ManagerConnection) Close() error {
 }
 func (self *ManagerConnection) Send(event WireEvent) error {
 	return binary.Write(self.conn, binary.LittleEndian, event)
+}
+func (self *ManagerConnection) ReadFull(buf []byte) (int, error) {
+	return io.ReadFull(self.conn, buf)
 }
