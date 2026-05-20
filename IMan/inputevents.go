@@ -1,4 +1,4 @@
-package inputevents
+package IMan
 
 import (
 	"encoding/binary"

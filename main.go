@@ -13,7 +13,7 @@ import (
 
 	argparse "github.com/rsa17826/go-arg-lib"
 	input "github.com/rsa17826/go-input-lib"
-	. "github.com/rsa17826/input-manager/inputevents"
+	. "github.com/rsa17826/input-manager/IMan"
 )
 
 type Client struct {
