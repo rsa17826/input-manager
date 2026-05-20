@@ -62,3 +62,6 @@ func (self *ManagerConnection) ReadFull(buf []byte) (int, error) {
 func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
 	return self.conn.Write([]byte{block})
 }
+func (self *ManagerConnection) Read(ev any) error {
+	return binary.Read(self.conn, binary.LittleEndian, &ev)
+}
