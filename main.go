@@ -13,6 +13,7 @@ import (
 
 	argparse "github.com/rsa17826/go-arg-lib"
 	input "github.com/rsa17826/go-input-lib"
+	. "github.com/rsa17826/input-manager/inputevents"
 )
 
 type Client struct {
@@ -22,21 +23,6 @@ type Client struct {
 	send   chan WireEvent
 	dead   bool
 }
-
-type WireEvent struct {
-	Sec   int64
-	Usec  int64
-	Type  uint16
-	Code  uint16
-	Value int32
-}
-
-const (
-	ModePassthrough = "LISTEN"
-	ModeBlocking    = "FILTER"
-	ModeInjection   = "INJECT"
-	ModeVirtListen  = "LISTEN_VIRT" // receives events forwarded to virtual devices
-)
 
 var (
 	clients    []*Client
