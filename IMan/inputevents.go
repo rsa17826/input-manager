@@ -63,5 +63,5 @@ func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
 	return self.conn.Write([]byte{block})
 }
 func (self *ManagerConnection) Read(ev *WireEvent) error {
-	return binary.Read(self.conn, binary.LittleEndian, &ev)
+	return binary.Read(self.conn, binary.LittleEndian, ev)
 }
