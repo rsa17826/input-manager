@@ -38,14 +38,14 @@ type ManagerConnection struct {
 func Connect(mode ServerMode) (*ManagerConnection, error) {
 	conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
 	if err != nil {
-		return &ManagerConnection, err
+		return &ManagerConnection{}, err
 	}
 
 	// Send the mode directly as a single byte
 	_, err = conn.Write([]byte{byte(mode)})
 	if err != nil {
 		conn.Close()
-		return &ManagerConnection, err
+		return &ManagerConnection{}, err
 	}
 	return &ManagerConnection{conn: conn}, nil
 }
