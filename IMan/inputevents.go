@@ -59,3 +59,6 @@ func (self *ManagerConnection) Send(event WireEvent) error {
 func (self *ManagerConnection) ReadFull(buf []byte) (int, error) {
 	return io.ReadFull(self.conn, buf)
 }
+func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
+	return self.conn.Write([]byte{block})
+}
