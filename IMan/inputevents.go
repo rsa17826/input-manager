@@ -2,7 +2,7 @@ package IMan
 
 import (
 	"encoding/binary"
-	"io"
+	"fmt"
 	"net"
 )
 
@@ -14,54 +14,106 @@ type WireEvent struct {
 	Code  uint16
 	Value int32
 }
-type ServerMode int
+
+type ServerMode uint8
 
 const (
-	ModeListen ServerMode = iota
-	ModeBlocking
-	ModeInjection
-	ModeVirtListen
+	ModeListen     ServerMode = 1 << 0
+	ModeBlocking   ServerMode = 1 << 1
+	ModeInjection  ServerMode = 1 << 2
+	ModeVirtListen ServerMode = 1 << 3
 )
 
-// Client modes available for connection routing.
-// const (
-//
-//	ModePassthrough = "LISTEN"
-//	ModeBlocking    = "FILTER"
-//	ModeInjection   = "INJECT"
-//	ModeVirtListen  = "LISTEN_VIRT"
-//
-// )
 type ManagerConnection struct {
-	conn net.Conn
+	asyncConn net.Conn // Handles Listen, Injection, VirtListen
+	blockConn net.Conn // Handles Blocking strictly isolated
 }
 
 func Connect(mode ServerMode) (*ManagerConnection, error) {
-	conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
-	if err != nil {
-		return &ManagerConnection{}, err
+	mgr := &ManagerConnection{}
+
+	// 1. If Blocking is requested, isolate it to its own socket connection
+	if (mode & ModeBlocking) != 0 {
+		conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect block channel: %w", err)
+		}
+		// Register strictly as Blocking
+		_, err = conn.Write([]byte{byte(ModeBlocking)})
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		mgr.blockConn = conn
 	}
 
-	// Send the mode directly as a single byte
-	_, err = conn.Write([]byte{byte(mode)})
-	if err != nil {
-		conn.Close()
-		return &ManagerConnection{}, err
+	// 2. If any other modes are requested, handle them over a second connection
+	asyncMask := mode & ^ModeBlocking
+	if asyncMask != 0 {
+		conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
+		if err != nil {
+			if mgr.blockConn != nil {
+				mgr.blockConn.Close()
+			}
+			return nil, fmt.Errorf("failed to connect async channel: %w", err)
+		}
+		// Register the remaining combined bits
+		_, err = conn.Write([]byte{byte(asyncMask)})
+		if err != nil {
+			conn.Close()
+			if mgr.blockConn != nil {
+				mgr.blockConn.Close()
+			}
+			return nil, err
+		}
+		mgr.asyncConn = conn
 	}
-	return &ManagerConnection{conn: conn}, nil
+
+	return mgr, nil
 }
+
 func (self *ManagerConnection) Close() error {
-	return self.conn.Close()
+	var err1, err2 error
+	if self.asyncConn != nil {
+		err1 = self.asyncConn.Close()
+	}
+	if self.blockConn != nil {
+		err2 = self.blockConn.Close()
+	}
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
+
+// Send pushes injection events up to the server via the async connection
 func (self *ManagerConnection) Send(event WireEvent) error {
-	return binary.Write(self.conn, binary.LittleEndian, event)
+	if self.asyncConn == nil {
+		return fmt.Errorf("injection mode not initialized on this connection")
+	}
+	return binary.Write(self.asyncConn, binary.LittleEndian, event)
 }
-func (self *ManagerConnection) ReadFull(buf []byte) (int, error) {
-	return io.ReadFull(self.conn, buf)
-}
-func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
-	return self.conn.Write([]byte{block})
-}
+
+// Read intercepts incoming event streams (Listen / VirtListen) from the async connection
 func (self *ManagerConnection) Read(ev *WireEvent) error {
-	return binary.Read(self.conn, binary.LittleEndian, ev)
+	if self.asyncConn == nil {
+		return fmt.Errorf("listen mode not initialized on this connection")
+	}
+	return binary.Write(self.asyncConn, binary.LittleEndian, ev)
+}
+
+// BlockInput replies back to a filter challenge strictly via the isolated blocking connection
+func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
+	if self.blockConn == nil {
+		return 0, fmt.Errorf("blocking mode not initialized on this connection")
+	}
+	return self.blockConn.Write([]byte{block})
+}
+
+// ReadBlockChallenge reads the incoming filter request from the server
+func (self *ManagerConnection) ReadBlockChallenge(ev *WireEvent) error {
+	if self.blockConn == nil {
+		return fmt.Errorf("blocking mode not initialized on this connection")
+	}
+	return binary.Read(self.blockConn, binary.LittleEndian, ev)
 }
