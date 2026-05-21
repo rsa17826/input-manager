@@ -2,11 +2,12 @@ package IMan
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
+	"reflect"
 )
 
-// WireEvent represents the hardware event layout passed over the wire.
 type WireEvent struct {
 	Sec   int64
 	Usec  int64
@@ -14,6 +15,7 @@ type WireEvent struct {
 	Code  uint16
 	Value int32
 }
+
 type ServerMode int
 
 const (
@@ -23,45 +25,162 @@ const (
 	ModeVirtListen
 )
 
-// Client modes available for connection routing.
-// const (
-//
-//	ModePassthrough = "LISTEN"
-//	ModeBlocking    = "FILTER"
-//	ModeInjection   = "INJECT"
-//	ModeVirtListen  = "LISTEN_VIRT"
-//
-// )
+// RoutedEvent tags where the event came from so your loop can process it correctly
+type RoutedEvent struct {
+	Event WireEvent
+	From  ServerMode
+}
+
 type ManagerConnection struct {
-	conn net.Conn
+	listenConn     net.Conn
+	blockConn      net.Conn
+	injectConn     net.Conn
+	virtListenConn net.Conn
+
+	// A single unified pipeline stream for all inbound events
+	eventChan chan RoutedEvent
+	closeChan chan struct{}
 }
 
-func Connect(mode ServerMode) (*ManagerConnection, error) {
-	conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
-	if err != nil {
-		return &ManagerConnection{}, err
+func Connect(modes ...ServerMode) (*ManagerConnection, error) {
+	mgr := &ManagerConnection{
+		eventChan: make(chan RoutedEvent, 512),
+		closeChan: make(chan struct{}),
 	}
 
-	// Send the mode directly as a single byte
-	_, err = conn.Write([]byte{byte(mode)})
-	if err != nil {
-		conn.Close()
-		return &ManagerConnection{}, err
+	for _, mode := range modes {
+		conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
+		if err != nil {
+			mgr.Close()
+			return nil, fmt.Errorf("failed to connect mode %d: %w", mode, err)
+		}
+
+		_, err = conn.Write([]byte{byte(mode)})
+		if err != nil {
+			conn.Close()
+			mgr.Close()
+			return nil, err
+		}
+
+		switch mode {
+		case ModeListen:
+			mgr.listenConn = conn
+		case ModeBlocking:
+			mgr.blockConn = conn
+		case ModeInjection:
+			mgr.injectConn = conn
+		case ModeVirtListen:
+			mgr.virtListenConn = conn
+		}
 	}
-	return &ManagerConnection{conn: conn}, nil
+
+	// Spin up the dynamic multi-channel listener loop
+	go mgr.startUnifiedMultiplexer()
+
+	return mgr, nil
 }
+
+// startUnifiedMultiplexer dynamically builds a select statement at runtime
+func (self *ManagerConnection) startUnifiedMultiplexer() {
+	var cases []reflect.SelectCase
+	var modes []ServerMode
+
+	// Helper to attach an active network stream connection to a channel case
+	addConnCase := func(conn net.Conn, mode ServerMode) {
+		if conn == nil {
+			return
+		}
+		ch := make(chan WireEvent)
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
+		modes = append(modes, mode)
+
+		// Dedicated light reader per socket pushing into reflect.Select cases
+		go func() {
+			var ev WireEvent
+			for {
+				err := binary.Read(conn, binary.LittleEndian, &ev)
+				if err != nil {
+					close(ch)
+					return
+				}
+				select {
+				case ch <- ev:
+				case <-self.closeChan:
+					return
+				}
+			}
+		}()
+	}
+
+	addConnCase(self.listenConn, ModeListen)
+	addConnCase(self.virtListenConn, ModeVirtListen)
+	addConnCase(self.blockConn, ModeBlocking)
+
+	// Include a close casing mechanism so loops exit gracefully on Close()
+	closeIdx := len(cases)
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(self.closeChan)})
+
+	if len(cases) == 1 { // Only the close case exists
+		return
+	}
+
+	for {
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == closeIdx || !ok {
+			return
+		}
+
+		ev := value.Interface().(WireEvent)
+		select {
+		case self.eventChan <- RoutedEvent{Event: ev, From: modes[chosen]}:
+		case <-self.closeChan:
+			return
+		}
+	}
+}
+
 func (self *ManagerConnection) Close() error {
-	return self.conn.Close()
+	close(self.closeChan)
+	if self.listenConn != nil {
+		self.listenConn.Close()
+	}
+	if self.blockConn != nil {
+		self.blockConn.Close()
+	}
+	if self.injectConn != nil {
+		self.injectConn.Close()
+	}
+	if self.virtListenConn != nil {
+		self.virtListenConn.Close()
+	}
+	return nil
 }
+
+// ReadNext blocks until ANY of the active sockets (Listen, Virt, or Block) receives an event
+func (self *ManagerConnection) ReadNext() (RoutedEvent, error) {
+	select {
+	case re, ok := <-self.eventChan:
+		if !ok {
+			return RoutedEvent{}, io.EOF
+		}
+		return re, nil
+	case <-self.closeChan:
+		return RoutedEvent{}, io.EOF
+	}
+}
+
+// Send outputs injection commands up the line
 func (self *ManagerConnection) Send(event WireEvent) error {
-	return binary.Write(self.conn, binary.LittleEndian, event)
+	if self.injectConn == nil {
+		return fmt.Errorf("injection mode not initialized")
+	}
+	return binary.Write(self.injectConn, binary.LittleEndian, event)
 }
-func (self *ManagerConnection) ReadFull(buf []byte) (int, error) {
-	return io.ReadFull(self.conn, buf)
-}
+
+// BlockInput replies back to intercept challenges via the blocking socket context
 func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
-	return self.conn.Write([]byte{block})
-}
-func (self *ManagerConnection) Read(ev *WireEvent) error {
-	return binary.Read(self.conn, binary.LittleEndian, ev)
+	if self.blockConn == nil {
+		return 0, fmt.Errorf("blocking mode not initialized")
+	}
+	return self.blockConn.Write([]byte{block})
 }
