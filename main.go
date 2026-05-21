@@ -61,7 +61,6 @@ func closeConnection() {
 }
 
 func handleNewConnection(conn net.Conn) {
-	// Allocate a 1-byte buffer to read the mode
 	buf := make([]byte, 1)
 	_, err := conn.Read(buf)
 	if err != nil {
@@ -69,10 +68,8 @@ func handleNewConnection(conn net.Conn) {
 		return
 	}
 
-	// Convert the raw byte back into your ServerMode enum type
 	mode := ServerMode(buf[0])
 
-	// Validate that the client didn't send unexpected/undefined bits
 	allValidModes := ModeListen | ModeBlocking | ModeInjection | ModeVirtListen
 	if mode == 0 || (mode & ^allValidModes) != 0 {
 		fmt.Printf("Invalid or unknown mode combination %d, closing connection\n", int(mode))
@@ -83,20 +80,18 @@ func handleNewConnection(conn net.Conn) {
 	c := &Client{
 		conn:   conn,
 		reader: bufio.NewReader(conn),
-		mode:   mode, // Stores the composite bitmask
+		mode:   mode,
 		send:   make(chan WireEvent, 256),
 	}
+
 	clientsMu.Lock()
 	clients = append(clients, c)
 	clientsMu.Unlock()
 
 	fmt.Printf("New client context registered with mode mask: %d\n", mode)
 
-	// --- Dynamic Worker Routine Spawning ---
-	// We use a WaitGroup to cleanly manage multiple goroutines sharing this connection
 	var wg sync.WaitGroup
 
-	// 1. If either Listen or VirtListen is active, we need the writer loop running
 	if (mode & (ModeListen | ModeVirtListen)) != 0 {
 		wg.Add(1)
 		go func() {
@@ -105,7 +100,6 @@ func handleNewConnection(conn net.Conn) {
 		}()
 	}
 
-	// 2. If Injection is active, run the injection reader loop
 	if (mode & ModeInjection) != 0 {
 		wg.Add(1)
 		go func() {
@@ -114,47 +108,24 @@ func handleNewConnection(conn net.Conn) {
 		}()
 	}
 
-	// NOTE: If ModeBlocking is paired with other modes, be careful.
-	// ModeBlocking currently runs synchronously inside filterClients() on the main thread.
-	// No separate routine is spawned here for Blocking.
-
-	// Monitor connection lifetime
+	// Track lifecycle
 	go func() {
-		wg.Wait() // Wait until all assigned loops for this connection exit
+		// If it's strictly a blocking connection, it doesn't have an async reader/writer loop.
+		// We keep it alive by waiting for the client to close the connection (reading EOF).
+		if mode == ModeBlocking {
+			dummy := make([]byte, 1)
+			// This blocks until the client disconnects or an error occurs
+			_, _ = c.conn.Read(dummy)
+		} else {
+			wg.Wait()
+		}
+
 		clientsMu.Lock()
 		c.dead = true
 		clientsMu.Unlock()
 		c.conn.Close()
 		fmt.Printf("Client socket with mode mask %d fully disconnected\n", mode)
 	}()
-
-	// clientsMu.Lock()
-	// clients = append(clients, c)
-	// clientsMu.Unlock()
-
-	// fmt.Printf("New client context registered: %d\n", mode)
-
-	// // Both LISTEN and LISTEN_VIRT are read-only stream consumers
-	// if mode == ModeListen || mode == ModeVirtListen {
-	// 	go func() {
-	// 		listenWriter(c)
-	// 		clientsMu.Lock()
-	// 		c.dead = true
-	// 		clientsMu.Unlock()
-	// 		fmt.Printf("%d client disconnected\n", mode)
-	// 	}()
-	// }
-
-	// // Handle execution loop for client sending instructions down the pipeline
-	// if mode == ModeInjection {
-	// 	go func() {
-	// 		handleInjectionReader(c)
-	// 		clientsMu.Lock()
-	// 		c.dead = true
-	// 		clientsMu.Unlock()
-	// 		fmt.Printf("INJECT client disconnected\n")
-	// 	}()
-	// }
 }
 
 // handleInjectionReader reads WireEvents sent *from* an INJECT client and passes them to vdevs
@@ -217,14 +188,14 @@ func broadcastReal(ev WireEvent) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
-	live := clients[:0]
+	// Allocate a new slice instead of re-slicing clients[:0] inline
+	live := make([]*Client, 0, len(clients))
 	for _, c := range clients {
 		if c.dead {
 			continue
 		}
 		live = append(live, c)
 
-		// Change from c.mode != ModeListen to bitwise check
 		if (c.mode & ModeListen) == 0 {
 			continue
 		}
@@ -435,7 +406,7 @@ func filterClients(ev WireEvent) bool {
 	defer clientsMu.Unlock()
 
 	block := false
-	live := clients[:0]
+	live := make([]*Client, 0, len(clients)) // Allocate a fresh tracking slice
 
 	for _, c := range clients {
 		if c.dead {
@@ -443,7 +414,6 @@ func filterClients(ev WireEvent) bool {
 		}
 		live = append(live, c)
 
-		// Change from c.mode != ModeBlocking to bitwise check
 		if (c.mode & ModeBlocking) == 0 {
 			continue
 		}
@@ -461,6 +431,9 @@ func filterClients(ev WireEvent) bool {
 		resp := make([]byte, 1)
 		_, err = io.ReadFull(c.reader, resp)
 		if err != nil {
+			// If reading fails or timeouts, mark dead so it gets cleaned up safely
+			c.conn.Close()
+			c.dead = true
 			continue
 		}
 
