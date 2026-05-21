@@ -61,6 +61,7 @@ func closeConnection() {
 }
 
 func handleNewConnection(conn net.Conn) {
+	// Allocate a 1-byte buffer to read the mode
 	buf := make([]byte, 1)
 	_, err := conn.Read(buf)
 	if err != nil {
@@ -68,19 +69,19 @@ func handleNewConnection(conn net.Conn) {
 		return
 	}
 
+	// Convert the raw byte back into your ServerMode enum type
 	mode := ServerMode(buf[0])
 
-	allValidModes := ModeListen | ModeBlocking | ModeInjection | ModeVirtListen
-	if mode == 0 || (mode & ^allValidModes) != 0 {
-		fmt.Printf("Invalid or unknown mode combination %d, closing connection\n", int(mode))
+	if mode != ModeListen && mode != ModeBlocking && mode != ModeInjection && mode != ModeVirtListen {
+		fmt.Printf("Unknown mode %d, closing connection\n", int(mode))
 		conn.Close()
 		return
 	}
 
 	c := &Client{
 		conn:   conn,
-		reader: bufio.NewReader(conn),
-		mode:   mode,
+		reader: bufio.NewReader(conn), // Keep the reader if you still need it later for data streams
+		mode:   mode,                  // This should now be typed as ServerMode in your Client struct
 		send:   make(chan WireEvent, 256),
 	}
 
@@ -88,44 +89,29 @@ func handleNewConnection(conn net.Conn) {
 	clients = append(clients, c)
 	clientsMu.Unlock()
 
-	fmt.Printf("New client context registered with mode mask: %d\n", mode)
+	fmt.Printf("New client context registered: %d\n", mode)
 
-	var wg sync.WaitGroup
-
-	if (mode & (ModeListen | ModeVirtListen)) != 0 {
-		wg.Add(1)
+	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
+	if mode == ModeListen || mode == ModeVirtListen {
 		go func() {
-			defer wg.Done()
 			listenWriter(c)
+			clientsMu.Lock()
+			c.dead = true
+			clientsMu.Unlock()
+			fmt.Printf("%d client disconnected\n", mode)
 		}()
 	}
 
-	if (mode & ModeInjection) != 0 {
-		wg.Add(1)
+	// Handle execution loop for client sending instructions down the pipeline
+	if mode == ModeInjection {
 		go func() {
-			defer wg.Done()
 			handleInjectionReader(c)
+			clientsMu.Lock()
+			c.dead = true
+			clientsMu.Unlock()
+			fmt.Printf("INJECT client disconnected\n")
 		}()
 	}
-
-	// Track lifecycle
-	go func() {
-		// If it's strictly a blocking connection, it doesn't have an async reader/writer loop.
-		// We keep it alive by waiting for the client to close the connection (reading EOF).
-		if mode == ModeBlocking {
-			dummy := make([]byte, 1)
-			// This blocks until the client disconnects or an error occurs
-			_, _ = c.conn.Read(dummy)
-		} else {
-			wg.Wait()
-		}
-
-		clientsMu.Lock()
-		c.dead = true
-		clientsMu.Unlock()
-		c.conn.Close()
-		fmt.Printf("Client socket with mode mask %d fully disconnected\n", mode)
-	}()
 }
 
 // handleInjectionReader reads WireEvents sent *from* an INJECT client and passes them to vdevs
@@ -188,15 +174,13 @@ func broadcastReal(ev WireEvent) {
 	clientsMu.Lock()
 	defer clientsMu.Unlock()
 
-	// Allocate a new slice instead of re-slicing clients[:0] inline
-	live := make([]*Client, 0, len(clients))
+	live := clients[:0]
 	for _, c := range clients {
 		if c.dead {
 			continue
 		}
 		live = append(live, c)
-
-		if (c.mode & ModeListen) == 0 {
+		if c.mode != ModeListen {
 			continue
 		}
 		select {
@@ -213,8 +197,7 @@ func broadcastVirt(ev WireEvent) {
 	defer clientsMu.Unlock()
 
 	for _, c := range clients {
-		// Change from c.mode != ModeVirtListen to bitwise check
-		if c.dead || (c.mode&ModeVirtListen) == 0 {
+		if c.dead || c.mode != ModeVirtListen {
 			continue
 		}
 		select {
@@ -406,7 +389,7 @@ func filterClients(ev WireEvent) bool {
 	defer clientsMu.Unlock()
 
 	block := false
-	live := make([]*Client, 0, len(clients)) // Allocate a fresh tracking slice
+	live := clients[:0]
 
 	for _, c := range clients {
 		if c.dead {
@@ -414,7 +397,7 @@ func filterClients(ev WireEvent) bool {
 		}
 		live = append(live, c)
 
-		if (c.mode & ModeBlocking) == 0 {
+		if c.mode != ModeBlocking {
 			continue
 		}
 
@@ -431,9 +414,6 @@ func filterClients(ev WireEvent) bool {
 		resp := make([]byte, 1)
 		_, err = io.ReadFull(c.reader, resp)
 		if err != nil {
-			// If reading fails or timeouts, mark dead so it gets cleaned up safely
-			c.conn.Close()
-			c.dead = true
 			continue
 		}
 
