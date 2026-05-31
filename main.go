@@ -273,15 +273,16 @@ func main() {
 	var kbdIDs []string
 	var mouseIDs []string
 	var disablePanicButton bool
-	var maxX int32
-	var maxY int32
+	var maxX int16
+	var maxY int16
 	argparse.ParseArgs([]argparse.ArgumentData{
 		{Keys: []string{"keyboard", "k"}, AfterCount: 1, VarArgs: true, Target: &kbdIDs, Description: "the keyboards to hook", AllowDupes: true},
 		{Keys: []string{"mouse", "m"}, AfterCount: 1, VarArgs: true, Target: &mouseIDs, Description: "the mice to hook", AllowDupes: true},
 		{Keys: []string{"disablePanicButton"}, AfterCount: 0, VarArgs: false, Target: &disablePanicButton, Description: "disables the ability to use ctrl+esc to exit the app even when the keyboard is locked", AllowDupes: false},
-		{Keys: []string{"maxX"}, AfterCount: 1, VarArgs: false, Target: &maxX, Description: "max screen x", AllowDupes: false},
-		{Keys: []string{"maxY"}, AfterCount: 1, VarArgs: false, Target: &maxY, Description: "max screen y", AllowDupes: false},
+		{Keys: []string{"maxX"}, AfterCount: 1, VarArgs: false, Target: &maxX, Description: "max screen x", AllowDupes: false, Default: []any{1920}},
+		{Keys: []string{"maxY"}, AfterCount: 1, VarArgs: false, Target: &maxY, Description: "max screen y", AllowDupes: false, Default: []any{1080}},
 	})
+	// print(maxX)
 	if len(kbdIDs) == 0 && len(mouseIDs) == 0 {
 		argparse.PrintHelpAndExit()
 	}
@@ -310,7 +311,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	vmouse, err = input.CreateVirtualMouse("vRoot mouse", input.WithAbsRange(maxX, maxY))
+	vmouse, err = input.CreateVirtualMouse("vRoot mouse", input.WithAbsRange(int32(maxX), int32(maxY)))
 	if err != nil {
 		panic(err)
 	}
