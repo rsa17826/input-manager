@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	linuxnotify "github.com/esiqveland/notify"
+	"github.com/godbus/dbus/v5"
 	argparse "github.com/rsa17826/go-arg-lib"
 	input "github.com/rsa17826/go-input-lib"
 	. "github.com/rsa17826/input-manager/IMan"
@@ -269,6 +271,28 @@ func waitRelease(dev interface {
 	}
 }
 
+// 0 = Low, 1 = Normal, 2 = Critical
+func notify(msg string, level byte) {
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		fmt.Println("Failed to connect to DBus:", err)
+		return
+	}
+	note := linuxnotify.Notification{
+		AppName:    "input manager",
+		ReplacesID: 0,
+		Summary:    "input manager",
+		Body:       msg,
+		Hints: map[string]dbus.Variant{
+			"urgency": dbus.MakeVariant(level),
+		},
+	}
+
+	_, err = linuxnotify.SendNotification(conn, note)
+	if err != nil {
+		fmt.Println("Failed to send notification:", err)
+	}
+}
 func main() {
 	var kbdIDs []string
 	var mouseIDs []string
@@ -347,9 +371,10 @@ func main() {
 		if !disablePanicButton {
 			if ev.Type == input.EV_KEY {
 				if ev.Code == input.KEY_LEFTCTRL {
-					ctrlPressed = ev.Value == 1
+					ctrlPressed = ev.Value >= 0
 				}
 				if ev.Code == input.KEY_ESC && ctrlPressed {
+					notify("Panic Pressed, Exiting...", 2)
 					os.Exit(5)
 				}
 			}
