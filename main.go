@@ -298,10 +298,11 @@ func notify(msg string, level byte) {
 		return
 	}
 	note := linuxnotify.Notification{
-		AppName:    "input manager",
-		ReplacesID: 0,
-		Summary:    "input manager",
-		Body:       msg,
+		AppName: "input manager",
+		// ReplacesID:    0,
+		Summary:       "input manager",
+		Body:          msg,
+		ExpireTimeout: 10,
 		Hints: map[string]dbus.Variant{
 			"urgency": dbus.MakeVariant(level),
 		},
@@ -391,7 +392,6 @@ func main() {
 			if ev.Type == input.EV_KEY {
 				if ev.Code == input.KEY_LEFTCTRL {
 					ctrlPressed = ev.Value > 0
-					println(ev.Value, ctrlPressed)
 				}
 				if ev.Code == input.KEY_ESC && ctrlPressed {
 					notify("Panic Pressed, Exiting...", 2)
