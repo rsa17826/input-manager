@@ -390,7 +390,8 @@ func main() {
 		if !disablePanicButton {
 			if ev.Type == input.EV_KEY {
 				if ev.Code == input.KEY_LEFTCTRL {
-					ctrlPressed = ev.Value >= 0
+					ctrlPressed = ev.Value > 0
+					println(ev.Value, ctrlPressed)
 				}
 				if ev.Code == input.KEY_ESC && ctrlPressed {
 					notify("Panic Pressed, Exiting...", 2)
