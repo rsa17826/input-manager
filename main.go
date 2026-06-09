@@ -21,6 +21,7 @@ type Client struct {
 	conn   net.Conn
 	reader *bufio.Reader
 	mode   ServerMode
+	name   string
 	send   chan WireEvent
 	dead   bool
 }
@@ -80,10 +81,22 @@ func handleNewConnection(conn net.Conn) {
 		return
 	}
 
+	// Read 1-byte name length, then the name itself
+	name := "unnamed"
+	_, err = conn.Read(buf) // reuse 1-byte buf for length
+	if err == nil && buf[0] > 0 {
+		nameBytes := make([]byte, buf[0])
+		_, err = io.ReadFull(conn, nameBytes)
+		if err == nil {
+			name = string(nameBytes)
+		}
+	}
+
 	c := &Client{
 		conn:   conn,
-		reader: bufio.NewReader(conn), // Keep the reader if you still need it later for data streams
-		mode:   mode,                  // This should now be typed as ServerMode in your Client struct
+		reader: bufio.NewReader(conn),
+		mode:   mode,
+		name:   name,
 		send:   make(chan WireEvent, 256),
 	}
 
@@ -91,7 +104,7 @@ func handleNewConnection(conn net.Conn) {
 	clients = append(clients, c)
 	clientsMu.Unlock()
 
-	fmt.Printf("New client context registered: %d\n", mode)
+	fmt.Printf("New client context registered: mode=%d name=%q\n", mode, name)
 
 	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
 	if mode == ModeListen || mode == ModeVirtListen {
@@ -125,7 +138,9 @@ func handleInjectionReader(c *Client) {
 		err := binary.Read(c.reader, binary.LittleEndian, &ev)
 		if err != nil {
 			if err != io.EOF {
-				fmt.Printf("INJECT connection read error: %v\n", err)
+				msg := fmt.Sprintf("INJECT client %q disconnected with read error: %v", c.name, err)
+				fmt.Println(msg)
+				notify(msg, 1)
 			}
 			return
 		}
@@ -165,7 +180,11 @@ func listenWriter(c *Client) {
 	for ev := range c.send {
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
+			msg := fmt.Sprintf("LISTEN client %q (mode %d) disconnected with write error: %v", c.name, c.mode, err)
+			fmt.Println(msg)
+			notify(msg, 1)
 			c.conn.Close()
+			c.dead = true
 			return
 		}
 	}
@@ -434,7 +453,9 @@ func filterClients(ev WireEvent) bool {
 		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
-			fmt.Printf("FILTER client write error: %v - removing\n", err)
+			msg := fmt.Sprintf("FILTER client %q disconnected with write error: %v", c.name, err)
+			fmt.Println(msg)
+			notify(msg, 1)
 			c.conn.Close()
 			c.dead = true
 			continue

@@ -42,10 +42,16 @@ type ManagerConnection struct {
 	closeChan chan struct{}
 }
 
-func Connect(modes ...ServerMode) (*ManagerConnection, error) {
+func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
 	mgr := &ManagerConnection{
 		eventChan: make(chan RoutedEvent, 512),
 		closeChan: make(chan struct{}),
+	}
+
+	// Clamp name to 255 bytes so it fits in the 1-byte length prefix
+	nameBytes := []byte(name)
+	if len(nameBytes) > 255 {
+		nameBytes = nameBytes[:255]
 	}
 
 	for _, mode := range modes {
@@ -55,7 +61,9 @@ func Connect(modes ...ServerMode) (*ManagerConnection, error) {
 			return nil, fmt.Errorf("failed to connect mode %d: %w", mode, err)
 		}
 
-		_, err = conn.Write([]byte{byte(mode)})
+		// Send mode byte, then 1-byte name length, then name
+		handshake := append([]byte{byte(mode), byte(len(nameBytes))}, nameBytes...)
+		_, err = conn.Write(handshake)
 		if err != nil {
 			conn.Close()
 			mgr.Close()
