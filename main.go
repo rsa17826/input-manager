@@ -106,6 +106,21 @@ func handleNewConnection(conn net.Conn) {
 
 	fmt.Printf("New client context registered: mode=%d name=%q\n", mode, name)
 
+	// For blocking clients, watch for the 0xFF graceful-disconnect sentinel.
+	// Sets c.dead so filterClients skips the write entirely — no broken pipe.
+	if mode == ModeBlocking {
+		go func() {
+			buf := make([]byte, 1)
+			_, err := io.ReadFull(c.reader, buf)
+			if err == nil && buf[0] == 0xFF {
+				clientsMu.Lock()
+				c.dead = true
+				clientsMu.Unlock()
+				fmt.Printf("FILTER client %q disconnected gracefully\n", c.name)
+			}
+		}()
+	}
+
 	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
 	if mode == ModeListen || mode == ModeVirtListen {
 		go func() {
@@ -473,16 +488,7 @@ func filterClients(ev WireEvent) bool {
 			} else {
 				msg := fmt.Sprintf("FILTER client %q read error: %v", c.name, err)
 				fmt.Println(msg)
-				notify(msg, 1)
 			}
-			c.conn.Close()
-			c.dead = true
-			continue
-		}
-
-		// 0xFF is the graceful disconnect sentinel — remove silently, no notification
-		if resp[0] == 0xFF {
-			fmt.Printf("FILTER client %q disconnected gracefully\n", c.name)
 			c.conn.Close()
 			c.dead = true
 			continue

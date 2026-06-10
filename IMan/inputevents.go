@@ -153,6 +153,7 @@ func (self *ManagerConnection) Close() error {
 		self.listenConn.Close()
 	}
 	if self.filterConn != nil {
+		self.filterConn.Write([]byte{0xFF})
 		self.filterConn.Close()
 	}
 	if self.injectConn != nil {
@@ -162,16 +163,6 @@ func (self *ManagerConnection) Close() error {
 		self.virtListenConn.Close()
 	}
 	return nil
-}
-
-// Disconnect sends a graceful shutdown sentinel to the server before closing,
-// so the server can distinguish a clean exit from an unexpected crash.
-// Use this instead of Close() when shutting down intentionally.
-func (self *ManagerConnection) Disconnect() error {
-	if self.filterConn != nil {
-		self.filterConn.Write([]byte{0xFF})
-	}
-	return self.Close()
 }
 
 // ReadNext blocks until ANY of the active sockets (Listen, Virt, or Block) receives an event
