@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"reflect"
 )
 
@@ -54,6 +55,10 @@ func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
 		nameBytes = nameBytes[:255]
 	}
 
+	// Encode PID as 4 little-endian bytes
+	pid := os.Getpid()
+	pidBytes := []byte{byte(pid), byte(pid >> 8), byte(pid >> 16), byte(pid >> 24)}
+
 	for _, mode := range modes {
 		conn, err := net.Dial("unix", "/tmp/kbd_manager.sock")
 		if err != nil {
@@ -61,8 +66,9 @@ func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
 			return nil, fmt.Errorf("failed to connect mode %d: %w", mode, err)
 		}
 
-		// Send mode byte, then 1-byte name length, then name
+		// Send: mode byte | name-length byte | name bytes | pid 4 bytes
 		handshake := append([]byte{byte(mode), byte(len(nameBytes))}, nameBytes...)
+		handshake = append(handshake, pidBytes...)
 		_, err = conn.Write(handshake)
 		if err != nil {
 			conn.Close()

@@ -22,6 +22,7 @@ type Client struct {
 	reader *bufio.Reader
 	mode   ServerMode
 	name   string
+	pid    int32
 	send   chan WireEvent
 	dead   bool
 }
@@ -92,11 +93,19 @@ func handleNewConnection(conn net.Conn) {
 		}
 	}
 
+	// Read 4-byte little-endian PID
+	var pid int32
+	pidBuf := make([]byte, 4)
+	if _, err = io.ReadFull(conn, pidBuf); err == nil {
+		pid = int32(pidBuf[0]) | int32(pidBuf[1])<<8 | int32(pidBuf[2])<<16 | int32(pidBuf[3])<<24
+	}
+
 	c := &Client{
 		conn:   conn,
 		reader: bufio.NewReader(conn),
 		mode:   mode,
 		name:   name,
+		pid:    pid,
 		send:   make(chan WireEvent, 256),
 	}
 
@@ -104,22 +113,7 @@ func handleNewConnection(conn net.Conn) {
 	clients = append(clients, c)
 	clientsMu.Unlock()
 
-	fmt.Printf("New client context registered: mode=%d name=%q\n", mode, name)
-
-	// // For blocking clients, watch for the 0xFF graceful-disconnect sentinel.
-	// // Sets c.dead so filterClients skips the write entirely — no broken pipe.
-	// if mode == ModeBlocking {
-	// 	go func() {
-	// 		buf := make([]byte, 1)
-	// 		_, err := io.ReadFull(c.reader, buf)
-	// 		if err == nil && buf[0] == 0xFF {
-	// 			clientsMu.Lock()
-	// 			c.dead = true
-	// 			clientsMu.Unlock()
-	// 			fmt.Printf("FILTER client %q disconnected gracefully\n", c.name)
-	// 		}
-	// 	}()
-	// }
+	fmt.Printf("New client context registered: mode=%d name=%q pid=%d\n", mode, name, pid)
 
 	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
 	if mode == ModeListen || mode == ModeVirtListen {
@@ -469,9 +463,18 @@ func filterClients(ev WireEvent) bool {
 		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
-			msg := fmt.Sprintf("FILTER client %q disconnected with write error: %v", c.name, err)
-			fmt.Println(msg)
-			// notify(msg, 1)
+			// The 0xFF graceful sentinel may already be sitting in the receive buffer
+			// even though the write end is closed — check before deciding to notify.
+			c.conn.SetReadDeadline(time.Now().Add(2 * time.Millisecond))
+			sentinel := make([]byte, 1)
+			n, _ := c.reader.Read(sentinel)
+			if n == 1 && sentinel[0] == 0xFF {
+				fmt.Printf("FILTER client %q (pid %d) disconnected gracefully\n", c.name, c.pid)
+			} else {
+				msg := fmt.Sprintf("FILTER client %q (pid %d) disconnected with write error: %v", c.name, c.pid, err)
+				fmt.Println(msg)
+				notify(msg, 1)
+			}
 			c.conn.Close()
 			c.dead = true
 			continue
@@ -483,10 +486,10 @@ func filterClients(ev WireEvent) bool {
 		if err != nil {
 			// Check if it was a timeout or a hard disconnect
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				msg := fmt.Sprintf("FILTER client %q timed out waiting for block response: %v", c.name, err)
+				msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response", c.name, c.pid)
 				fmt.Println(msg)
 			} else {
-				msg := fmt.Sprintf("FILTER client %q read error: %v", c.name, err)
+				msg := fmt.Sprintf("FILTER client %q (pid %d) read error: %v", c.name, c.pid, err)
 				fmt.Println(msg)
 			}
 			c.conn.Close()
