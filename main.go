@@ -76,7 +76,7 @@ func handleNewConnection(conn net.Conn) {
 	// Convert the raw byte back into your ServerMode enum type
 	mode := ServerMode(buf[0])
 
-	if mode != ModeListen && mode != ModeBlocking && mode != ModeInjection && mode != ModeVirtListen {
+	if mode != ModeListen && mode != ModeFilter && mode != ModeInjection && mode != ModeVirtListen {
 		fmt.Printf("Unknown mode %d, closing connection\n", int(mode))
 		conn.Close()
 		return
@@ -456,7 +456,7 @@ func filterClients(ev WireEvent) bool {
 		}
 		live = append(live, c)
 
-		if c.mode != ModeBlocking {
+		if c.mode != ModeFilter {
 			continue
 		}
 

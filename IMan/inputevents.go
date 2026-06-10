@@ -21,7 +21,7 @@ type ServerMode int
 
 const (
 	ModeListen ServerMode = iota
-	ModeBlocking
+	ModeFilter
 	ModeInjection
 	ModeVirtListen
 )
@@ -79,7 +79,7 @@ func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
 		switch mode {
 		case ModeListen:
 			mgr.listenConn = conn
-		case ModeBlocking:
+		case ModeFilter:
 			mgr.filterConn = conn
 		case ModeInjection:
 			mgr.injectConn = conn
@@ -128,7 +128,7 @@ func (self *ManagerConnection) startUnifiedMultiplexer() {
 
 	addConnCase(self.listenConn, ModeListen)
 	addConnCase(self.virtListenConn, ModeVirtListen)
-	addConnCase(self.filterConn, ModeBlocking)
+	addConnCase(self.filterConn, ModeFilter)
 
 	// Include a close casing mechanism so loops exit gracefully on Close()
 	closeIdx := len(cases)
