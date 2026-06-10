@@ -28,7 +28,7 @@
             pname = "input-manager";
             version = "2";
             src = ./.;
-            vendorHash = "sha256-sWP8A1OlAOyf0DzSE5i2rP9pzrL+opJvbwGAvtxXuUg=";
+            vendorHash = "sha256-HfbliIkwN4TjMVh0fJ2uQAwLMmk47I+xKGZ+fhsRQb4=";
           };
         };
         devShells = {
