@@ -33,7 +33,7 @@ type RoutedEvent struct {
 
 type ManagerConnection struct {
 	listenConn     net.Conn
-	blockConn      net.Conn
+	filterConn     net.Conn
 	injectConn     net.Conn
 	virtListenConn net.Conn
 
@@ -74,7 +74,7 @@ func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
 		case ModeListen:
 			mgr.listenConn = conn
 		case ModeBlocking:
-			mgr.blockConn = conn
+			mgr.filterConn = conn
 		case ModeInjection:
 			mgr.injectConn = conn
 		case ModeVirtListen:
@@ -122,7 +122,7 @@ func (self *ManagerConnection) startUnifiedMultiplexer() {
 
 	addConnCase(self.listenConn, ModeListen)
 	addConnCase(self.virtListenConn, ModeVirtListen)
-	addConnCase(self.blockConn, ModeBlocking)
+	addConnCase(self.filterConn, ModeBlocking)
 
 	// Include a close casing mechanism so loops exit gracefully on Close()
 	closeIdx := len(cases)
@@ -152,8 +152,9 @@ func (self *ManagerConnection) Close() error {
 	if self.listenConn != nil {
 		self.listenConn.Close()
 	}
-	if self.blockConn != nil {
-		self.blockConn.Close()
+	if self.filterConn != nil {
+		self.filterConn.Write([]byte{0xFF})
+		self.filterConn.Close()
 	}
 	if self.injectConn != nil {
 		self.injectConn.Close()
@@ -162,6 +163,13 @@ func (self *ManagerConnection) Close() error {
 		self.virtListenConn.Close()
 	}
 	return nil
+}
+
+// Disconnect sends a graceful shutdown sentinel to the server before closing,
+// so the server can distinguish a clean exit from an unexpected crash.
+// Use this instead of Close() when shutting down intentionally.
+func (self *ManagerConnection) Disconnect() error {
+	return self.Close()
 }
 
 // ReadNext blocks until ANY of the active sockets (Listen, Virt, or Block) receives an event
@@ -187,8 +195,8 @@ func (self *ManagerConnection) Send(event WireEvent) error {
 
 // BlockInput replies back to intercept challenges via the blocking socket context
 func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
-	if self.blockConn == nil {
+	if self.filterConn == nil {
 		return 0, fmt.Errorf("blocking mode not initialized")
 	}
-	return self.blockConn.Write([]byte{block})
+	return self.filterConn.Write([]byte{block})
 }

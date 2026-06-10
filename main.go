@@ -466,6 +466,25 @@ func filterClients(ev WireEvent) bool {
 		resp := make([]byte, 1)
 		_, err = io.ReadFull(c.reader, resp)
 		if err != nil {
+			// Check if it was a timeout or a hard disconnect
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				msg := fmt.Sprintf("FILTER client %q timed out waiting for block response", c.name)
+				fmt.Println(msg)
+			} else {
+				msg := fmt.Sprintf("FILTER client %q read error: %v", c.name, err)
+				fmt.Println(msg)
+				notify(msg, 1)
+			}
+			c.conn.Close()
+			c.dead = true
+			continue
+		}
+
+		// 0xFF is the graceful disconnect sentinel — remove silently, no notification
+		if resp[0] == 0xFF {
+			fmt.Printf("FILTER client %q disconnected gracefully\n", c.name)
+			c.conn.Close()
+			c.dead = true
 			continue
 		}
 
