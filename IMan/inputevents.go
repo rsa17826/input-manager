@@ -153,7 +153,6 @@ func (self *ManagerConnection) Close() error {
 		self.listenConn.Close()
 	}
 	if self.filterConn != nil {
-		self.filterConn.Write([]byte{0xFF})
 		self.filterConn.Close()
 	}
 	if self.injectConn != nil {
@@ -169,6 +168,9 @@ func (self *ManagerConnection) Close() error {
 // so the server can distinguish a clean exit from an unexpected crash.
 // Use this instead of Close() when shutting down intentionally.
 func (self *ManagerConnection) Disconnect() error {
+	if self.filterConn != nil {
+		self.filterConn.Write([]byte{0xFF})
+	}
 	return self.Close()
 }
 
