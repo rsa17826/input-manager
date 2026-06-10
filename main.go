@@ -118,11 +118,18 @@ func handleNewConnection(conn net.Conn) {
 	// Both LISTEN and LISTEN_VIRT are read-only stream consumers
 	if mode == ModeListen || mode == ModeVirtListen {
 		go func() {
-			listenWriter(c)
+			var filterName string = ""
+			if mode == ModeListen {
+				filterName = "LISTEN"
+			} else {
+				filterName = "VIRT_LISTEN"
+			}
+			listenWriter(c, filterName)
 			clientsMu.Lock()
 			c.dead = true
 			clientsMu.Unlock()
-			fmt.Printf("%d client disconnected\n", mode)
+
+			fmt.Printf("%s client disconnected\n", filterName)
 		}()
 	}
 
@@ -185,11 +192,11 @@ func handleInjectionReader(c *Client) {
 	}
 }
 
-func listenWriter(c *Client) {
+func listenWriter(c *Client, filterName string) {
 	for ev := range c.send {
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
-			msg := fmt.Sprintf("LISTEN client %q (mode %d) disconnected with write error: %v", c.name, c.mode, err)
+			msg := fmt.Sprintf("%s client %q (mode %d) (pid %d) disconnected with write error: %v", filterName, c.name, c.mode, c.pid, err)
 			fmt.Println(msg)
 			notify(msg, 1)
 			c.conn.Close()
