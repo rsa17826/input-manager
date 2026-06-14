@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"sync"
@@ -42,6 +43,82 @@ var (
 )
 
 var eventBus = make(chan WireEvent, 1024)
+
+// realKeyState tracks which EV_KEY codes are currently held on real devices.
+// virtKeyState tracks the same for events that actually reached the virtual devices.
+// Both are read under their respective mutexes and snapshotted for new clients.
+var (
+	realKeyState   = make(map[uint16]int32)
+	realKeyStateMu sync.Mutex
+
+	virtKeyState   = make(map[uint16]int32)
+	virtKeyStateMu sync.Mutex
+)
+
+func applyKeyState(m map[uint16]int32, code uint16, value int32) {
+	if value == 0 {
+		delete(m, code)
+	} else {
+		m[code] = value
+	}
+}
+
+// sendInitialKeyState pushes the current pressed-key snapshot to a newly connected
+// client before it enters the live client list, so it sees keys that were already
+// held when it started.  For channel-based modes (Listen / VirtListen) events are
+// buffered in c.send; for Filter the sync write+read handshake is done inline.
+func sendInitialKeyState(c *Client) {
+	var snapshot map[uint16]int32
+
+	if c.mode == ModeVirtListen {
+		virtKeyStateMu.Lock()
+		snapshot = make(map[uint16]int32, len(virtKeyState))
+		maps.Copy(snapshot, virtKeyState)
+		virtKeyStateMu.Unlock()
+	} else {
+		realKeyStateMu.Lock()
+		snapshot = make(map[uint16]int32, len(realKeyState))
+		maps.Copy(snapshot, realKeyState)
+		realKeyStateMu.Unlock()
+	}
+
+	if len(snapshot) == 0 {
+		return
+	}
+
+	now := time.Now()
+	sec := now.Unix()
+	usec := int64(now.Nanosecond() / 1000)
+
+	for code, value := range snapshot {
+		ev := WireEvent{Sec: sec, Usec: usec, Type: input.EV_KEY, Code: code, Value: value}
+
+		switch c.mode {
+		case ModeListen, ModeVirtListen:
+			select {
+			case c.send <- ev:
+			default:
+			}
+
+		case ModeFilter:
+			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
+			if err := binary.Write(c.conn, binary.LittleEndian, ev); err != nil {
+				c.conn.SetWriteDeadline(time.Time{})
+				return
+			}
+			c.conn.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+			resp := make([]byte, 1)
+			if _, err := io.ReadFull(c.reader, resp); err != nil {
+				c.conn.SetReadDeadline(time.Time{})
+				return
+			}
+		}
+	}
+
+	// Clear any deadlines left by the Filter branch
+	c.conn.SetWriteDeadline(time.Time{})
+	c.conn.SetReadDeadline(time.Time{})
+}
 
 func startSocketServer() {
 	os.Remove(socketPath)
@@ -107,6 +184,14 @@ func handleNewConnection(conn net.Conn) {
 		name:   name,
 		pid:    pid,
 		send:   make(chan WireEvent, 256),
+	}
+
+	// Replay currently-held keys to non-injection clients BEFORE they enter the
+	// live client list.  This guarantees the main loop cannot interleave real
+	// events between the snapshot and the first live event, and for ModeFilter
+	// the inline write+read is complete before filterClients() can touch c.
+	if mode != ModeInjection {
+		sendInitialKeyState(c)
 	}
 
 	clientsMu.Lock()
@@ -185,6 +270,14 @@ func handleInjectionReader(c *Client) {
 			vkb.SendEvent(ev.Type, ev.Code, ev.Value)
 			vkb.Sync()
 			vkbMu.Unlock()
+		}
+
+		// Mirror injected EV_KEY events into the virt state so VirtListen
+		// clients that connect later see keys held via injection.
+		if ev.Type == input.EV_KEY {
+			virtKeyStateMu.Lock()
+			applyKeyState(virtKeyState, ev.Code, ev.Value)
+			virtKeyStateMu.Unlock()
 		}
 
 		// Notify LISTEN_VIRT clients that this event reached the virtual device
@@ -415,6 +508,14 @@ func main() {
 				}
 			}
 		}
+		// Keep the real-device key state up to date so new clients get an
+		// accurate snapshot regardless of whether the event is later blocked.
+		if ev.Type == input.EV_KEY {
+			realKeyStateMu.Lock()
+			applyKeyState(realKeyState, ev.Code, ev.Value)
+			realKeyStateMu.Unlock()
+		}
+
 		blocked := filterClients(ev)
 		broadcastReal(ev)
 
@@ -445,6 +546,15 @@ func main() {
 				vkb.Sync()
 				vkbMu.Unlock()
 			}
+
+			// Mirror what actually reached the virtual devices so VirtListen
+			// clients get a correct snapshot too.
+			if ev.Type == input.EV_KEY {
+				virtKeyStateMu.Lock()
+				applyKeyState(virtKeyState, ev.Code, ev.Value)
+				virtKeyStateMu.Unlock()
+			}
+
 			broadcastVirt(ev)
 		}
 	}
