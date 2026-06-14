@@ -89,7 +89,7 @@ func (self *ManagerConnection) EnableKeyMap(autoRead bool) error {
 }
 
 func (self *ManagerConnection) ModPressed() bool {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.ShiftPressedReal() || self.CtrlPressedReal() || self.AltPressedReal() || self.MetaPressedReal()
 	}
 	if self.virtListenConn != nil {
@@ -104,7 +104,7 @@ func (self *ManagerConnection) ModPressedVirt() bool {
 	return self.ShiftPressedVirt() || self.CtrlPressedVirt() || self.AltPressedVirt() || self.MetaPressedVirt()
 }
 func (self *ManagerConnection) ShiftPressed() bool {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.IsPressedReal(input.KEY_LEFTSHIFT) || self.IsPressedReal(input.KEY_RIGHTSHIFT)
 	}
 	if self.virtListenConn != nil {
@@ -119,7 +119,7 @@ func (self *ManagerConnection) ShiftPressedVirt() bool {
 	return self.IsPressedVirt(input.KEY_LEFTSHIFT) || self.IsPressedVirt(input.KEY_RIGHTSHIFT)
 }
 func (self *ManagerConnection) CtrlPressed() bool {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.IsPressedReal(input.KEY_LEFTCTRL) || self.IsPressedReal(input.KEY_RIGHTCTRL)
 	}
 	if self.virtListenConn != nil {
@@ -134,7 +134,7 @@ func (self *ManagerConnection) CtrlPressedVirt() bool {
 	return self.IsPressedVirt(input.KEY_LEFTCTRL) || self.IsPressedVirt(input.KEY_RIGHTCTRL)
 }
 func (self *ManagerConnection) AltPressed() bool {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.IsPressedReal(input.KEY_LEFTALT) || self.IsPressedReal(input.KEY_RIGHTALT)
 	}
 	if self.virtListenConn != nil {
@@ -149,7 +149,7 @@ func (self *ManagerConnection) AltPressedVirt() bool {
 	return self.IsPressedVirt(input.KEY_LEFTALT) || self.IsPressedVirt(input.KEY_RIGHTALT)
 }
 func (self *ManagerConnection) MetaPressed() bool {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.IsPressedReal(input.KEY_LEFTMETA) || self.IsPressedReal(input.KEY_RIGHTMETA)
 	}
 	if self.virtListenConn != nil {
@@ -167,7 +167,7 @@ func (self *ManagerConnection) MetaPressedVirt() bool {
 // IsPressed reports whether the given key code is currently held down.
 // Requires EnableKeyMap to have been called; returns false otherwise.
 func (self *ManagerConnection) IsPressed(code uint16) bool {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.IsPressedReal(code)
 	}
 	if self.virtListenConn != nil {
@@ -189,7 +189,7 @@ func (self *ManagerConnection) IsPressedVirt(code uint16) bool {
 // KeyValue returns the raw value for a key code: 0 = up, 1 = down, 2 = repeat.
 // Requires EnableKeyMap to have been called; returns 0 if not held or not tracking.
 func (self *ManagerConnection) KeyValue(code uint16) int32 {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.KeyValueReal(code)
 	}
 	if self.virtListenConn != nil {
@@ -211,7 +211,7 @@ func (self *ManagerConnection) KeyValueReal(code uint16) int32 {
 // PressedKeys returns a snapshot of all key codes currently considered held.
 // Requires EnableKeyMap to have been called.
 func (self *ManagerConnection) PressedKeys() []uint16 {
-	if self.listenConn != nil {
+	if self.listenConn != nil || self.filterConn != nil {
 		return self.PressedKeysReal()
 	}
 	if self.virtListenConn != nil {
