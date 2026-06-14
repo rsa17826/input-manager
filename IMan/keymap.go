@@ -62,9 +62,8 @@ func (self *ManagerConnection) EnableKeyMap(autoRead bool) error {
 		self.virtKeyMap = make(map[uint16]int32)
 	}
 	self.realKeyMapMu.Unlock()
-	if self.listenConn == nil && self.virtListenConn == nil {
+	if self.listenConn == nil && self.virtListenConn == nil && self.filterConn == nil {
 		return fmt.Errorf("keymap can only be enabled when using either ModeListen or ModeVirtListen")
-
 	}
 	if !autoRead {
 		return nil
