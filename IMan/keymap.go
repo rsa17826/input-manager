@@ -13,7 +13,7 @@ func (self *ManagerConnection) applyToKeyMap(ev WireEvent, mode ServerMode) {
 		return
 	}
 	switch mode {
-	case ModeListen:
+	case ModeListen, ModeFilter:
 		{
 			self.realKeyMapMu.Lock()
 			if self.realKeyMap == nil {
@@ -63,7 +63,7 @@ func (self *ManagerConnection) EnableKeyMap(autoRead bool) error {
 	}
 	self.realKeyMapMu.Unlock()
 	if self.listenConn == nil && self.virtListenConn == nil && self.filterConn == nil {
-		return fmt.Errorf("keymap can only be enabled when using either ModeListen or ModeVirtListen")
+		return fmt.Errorf("keymap can only be enabled when using either ModeListen or ModeVirtListen or ModeFilter")
 	}
 	if !autoRead {
 		return nil
