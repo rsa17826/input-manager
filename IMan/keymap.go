@@ -89,6 +89,21 @@ func (self *ManagerConnection) EnableKeyMap(autoRead bool) error {
 	return nil
 }
 
+func (self *ManagerConnection) ModPressed() bool {
+	if self.listenConn != nil {
+		return self.ShiftPressedReal() || self.CtrlPressedReal() || self.AltPressedReal() || self.MetaPressedReal()
+	}
+	if self.virtListenConn != nil {
+		return self.ShiftPressedVirt() || self.CtrlPressedVirt() || self.AltPressedVirt() || self.MetaPressedVirt()
+	}
+	return false
+}
+func (self *ManagerConnection) ModPressedReal() bool {
+	return self.ShiftPressedReal() || self.CtrlPressedReal() || self.AltPressedReal() || self.MetaPressedReal()
+}
+func (self *ManagerConnection) ModPressedVirt() bool {
+	return self.ShiftPressedVirt() || self.CtrlPressedVirt() || self.AltPressedVirt() || self.MetaPressedVirt()
+}
 func (self *ManagerConnection) ShiftPressed() bool {
 	if self.listenConn != nil {
 		return self.IsPressedReal(input.KEY_LEFTSHIFT) || self.IsPressedReal(input.KEY_RIGHTSHIFT)
