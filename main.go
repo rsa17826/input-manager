@@ -245,30 +245,30 @@ func handleInjectionReader(c *Client) {
 			}
 			return
 		}
-
+		println(c.name, ev.Code, ev.Value)
 		// Direct routing execution blocks mirrored cleanly from your main loop routing
 		switch ev.Type {
 		case input.EV_KEY:
 			if ev.Code >= 256 {
 				vmouseMu.Lock()
 				vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
-				vmouse.Sync()
+				// vmouse.Sync()
 				vmouseMu.Unlock()
 			} else {
 				vkbMu.Lock()
 				vkb.SendEvent(ev.Type, ev.Code, ev.Value)
-				vkb.Sync()
+				// vkb.Sync()
 				vkbMu.Unlock()
 			}
 		case input.EV_REL, input.EV_ABS:
 			vmouseMu.Lock()
 			vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
-			vmouse.Sync()
+			// vmouse.Sync()
 			vmouseMu.Unlock()
 		default:
 			vkbMu.Lock()
 			vkb.SendEvent(ev.Type, ev.Code, ev.Value)
-			vkb.Sync()
+			// vkb.Sync()
 			vkbMu.Unlock()
 		}
 
