@@ -577,7 +577,7 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
+		c.conn.SetWriteDeadline(time.Now().Add(30 * time.Millisecond))
 		err := binary.Write(c.conn, binary.LittleEndian, ev)
 		if err != nil {
 			// The 0xFF graceful sentinel may already be sitting in the receive buffer
