@@ -19,13 +19,14 @@ import (
 )
 
 type Client struct {
-	conn   net.Conn
-	reader *bufio.Reader
-	mode   ServerMode
-	name   string
-	pid    int32
-	send   chan WireEvent
-	dead   bool
+	conn        net.Conn
+	reader      *bufio.Reader
+	mode        ServerMode
+	name        string
+	pid         int32
+	send        chan WireEvent
+	dead        bool
+	missedCount int // consecutive filter timeouts; dc at 3
 }
 
 var (
@@ -400,11 +401,17 @@ func waitRelease(dev interface {
 }
 
 // 0 = Low, 1 = Normal, 2 = Critical
-func notify(msg string, level byte) {
+func notify(msg string, level byte, transient ...bool) {
 	conn, err := dbus.SessionBus()
 	if err != nil {
 		fmt.Println("Failed to connect to DBus:", err)
 		return
+	}
+	hints := map[string]dbus.Variant{
+		"urgency": dbus.MakeVariant(level),
+	}
+	if len(transient) > 0 && transient[0] {
+		hints["transient"] = dbus.MakeVariant(true)
 	}
 	note := linuxnotify.Notification{
 		AppName: "input manager",
@@ -412,9 +419,7 @@ func notify(msg string, level byte) {
 		Summary:       "input manager",
 		Body:          msg,
 		ExpireTimeout: 10,
-		Hints: map[string]dbus.Variant{
-			"urgency": dbus.MakeVariant(level),
-		},
+		Hints:         hints,
 	}
 
 	_, err = linuxnotify.SendNotification(conn, note)
@@ -603,15 +608,30 @@ func filterClients(ev WireEvent) bool {
 		if err != nil {
 			// Check if it was a timeout or a hard disconnect
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response", c.name, c.pid)
-				fmt.Println(msg)
+				c.missedCount++
+				if c.missedCount >= 3 {
+					msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response", c.name, c.pid)
+					fmt.Println(msg)
+					notify(msg, 1)
+					c.conn.Close()
+					c.dead = true
+				}
 			} else {
 				msg := fmt.Sprintf("FILTER client %q (pid %d) read error: %v", c.name, c.pid, err)
 				fmt.Println(msg)
+				notify(msg, 1)
+				c.conn.Close()
+				c.dead = true
 			}
-			c.conn.Close()
-			c.dead = true
 			continue
+		}
+
+		// Successful response — reset the consecutive-miss counter
+		if c.missedCount != 0 {
+			msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response %d times before responding", c.name, c.pid, c.missedCount)
+			fmt.Println(msg)
+			notify(msg, 0, true)
+			c.missedCount = 0
 		}
 
 		if resp[0] == 1 {
