@@ -261,6 +261,13 @@ func handleInjectionReader(c *Client) {
 				// vkb.Sync()
 				vkbMu.Unlock()
 			}
+		case input.EV_SYN:
+			vmouseMu.Lock()
+			vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
+			vmouseMu.Unlock()
+			vkbMu.Lock()
+			vkb.SendEvent(ev.Type, ev.Code, ev.Value)
+			vkbMu.Unlock()
 		case input.EV_REL, input.EV_ABS:
 			vmouseMu.Lock()
 			vmouse.SendEvent(ev.Type, ev.Code, ev.Value)
