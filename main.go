@@ -26,7 +26,8 @@ type Client struct {
 	pid         int32
 	send        chan WireEvent
 	dead        bool
-	missedCount int // consecutive filter timeouts; dc at 3
+	missedCount int    // consecutive filter timeouts; dc at 3
+	nextSeq     uint64 // last Seq assigned to a ModeFilter request sent to this client
 }
 
 var (
@@ -102,16 +103,26 @@ func sendInitialKeyState(c *Client) {
 			}
 
 		case ModeFilter:
+			c.nextSeq++
+			ev.Seq = c.nextSeq
 			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Millisecond))
 			if err := binary.Write(c.conn, binary.LittleEndian, ev); err != nil {
 				c.conn.SetWriteDeadline(time.Time{})
 				return
 			}
-			c.conn.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
-			resp := make([]byte, 1)
-			if _, err := io.ReadFull(c.reader, resp); err != nil {
-				c.conn.SetReadDeadline(time.Time{})
-				return
+			deadline := time.Now().Add(30 * time.Millisecond)
+			for {
+				c.conn.SetReadDeadline(deadline)
+				var resp FilterResponse
+				if err := binary.Read(c.reader, binary.LittleEndian, &resp); err != nil {
+					c.conn.SetReadDeadline(time.Time{})
+					return
+				}
+				if resp.Seq == c.nextSeq || time.Now().After(deadline) {
+					break
+				}
+				// Stale response to an earlier request — discard and keep
+				// reading within whatever time budget remains.
 			}
 		}
 	}
@@ -589,8 +600,12 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
+		c.nextSeq++
+		taggedEv := ev
+		taggedEv.Seq = c.nextSeq
+
 		c.conn.SetWriteDeadline(time.Now().Add(30 * time.Millisecond))
-		err := binary.Write(c.conn, binary.LittleEndian, ev)
+		err := binary.Write(c.conn, binary.LittleEndian, taggedEv)
 		if err != nil {
 			// The 0xFF graceful sentinel may already be sitting in the receive buffer
 			// even though the write end is closed — check before deciding to notify.
@@ -609,39 +624,77 @@ func filterClients(ev WireEvent) bool {
 			continue
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
-		resp := make([]byte, 1)
-		_, err = io.ReadFull(c.reader, resp)
-		if err != nil {
-			// Check if it was a timeout or a hard disconnect
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				c.missedCount++
-				if c.missedCount >= 3 {
-					msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response", c.name, c.pid)
+		// Read responses until we get one tagged with THIS event's seq, or
+		// the deadline runs out. A response tagged with an earlier seq is a
+		// late answer to a previous event — discard it and keep reading
+		// instead of treating it as the answer to this one. This is what
+		// keeps a single slow response from permanently desyncing the
+		// block-decision stream: the very next read call resyncs itself.
+		deadline := time.Now().Add(30 * time.Millisecond)
+		var resp FilterResponse
+		var readErr error
+		matched := false
+		for {
+			c.conn.SetReadDeadline(deadline)
+			readErr = binary.Read(c.reader, binary.LittleEndian, &resp)
+			if readErr != nil {
+				break
+			}
+			if resp.Seq == taggedEv.Seq {
+				matched = true
+				break
+			}
+			// stale response to an earlier request — loop and keep reading
+			// within whatever time budget remains
+			if time.Now().After(deadline) {
+				break
+			}
+		}
+
+		if !matched {
+			if readErr != nil {
+				// Check if it was a timeout or a hard disconnect
+				if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+					c.missedCount++
+					if c.missedCount >= 3 {
+						msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response", c.name, c.pid)
+						fmt.Println(msg)
+						notify(msg, 1)
+						c.conn.Close()
+						c.dead = true
+					}
+				} else {
+					msg := fmt.Sprintf("FILTER client %q (pid %d) read error: %v", c.name, c.pid, readErr)
 					fmt.Println(msg)
 					notify(msg, 1)
 					c.conn.Close()
 					c.dead = true
 				}
 			} else {
-				msg := fmt.Sprintf("FILTER client %q (pid %d) read error: %v", c.name, c.pid, err)
-				fmt.Println(msg)
-				notify(msg, 1)
-				c.conn.Close()
-				c.dead = true
+				// Deadline passed without a matching response — treat as a
+				// miss for this event, same as a timeout, but the connection
+				// itself is still healthy and will resync on the next event.
+				c.missedCount++
+				if c.missedCount >= 3 {
+					msg := fmt.Sprintf("FILTER client %q (pid %d) missed %d consecutive block responses", c.name, c.pid, c.missedCount)
+					fmt.Println(msg)
+					notify(msg, 1)
+					c.conn.Close()
+					c.dead = true
+				}
 			}
 			continue
 		}
 
-		// Successful response — reset the consecutive-miss counter
+		// Successful, correctly-matched response — reset the consecutive-miss counter
 		if c.missedCount != 0 {
-			msg := fmt.Sprintf("FILTER client %q (pid %d) timed out waiting for block response %d times before responding", c.name, c.pid, c.missedCount)
+			msg := fmt.Sprintf("FILTER client %q (pid %d) missed %d consecutive block responses before responding", c.name, c.pid, c.missedCount)
 			fmt.Println(msg)
 			notify(msg, 0, true)
 			c.missedCount = 0
 		}
 
-		if resp[0] == 1 {
+		if resp.Block == 1 {
 			block = true
 		}
 	}

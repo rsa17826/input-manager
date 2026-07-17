@@ -1,6 +1,7 @@
 package IMan
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -20,6 +21,22 @@ type WireEvent struct {
 	Type  uint16
 	Code  uint16
 	Value int32
+	// Seq tags ModeFilter events with a per-connection, monotonically
+	// increasing request id. It lets the server match a filter client's
+	// response to the request it actually answers, instead of assuming
+	// strict request/response alternation on the wire. Unused (0) for
+	// other modes.
+	Seq uint64
+}
+
+// FilterResponse is the framed reply a ModeFilter client sends back for a
+// given event Seq. Using a tagged response (instead of a bare byte) lets the
+// server detect and discard a stale/late answer to a previous event rather
+// than misreading it as the answer to the current one — a single slow
+// response can no longer permanently desync the block-decision stream.
+type FilterResponse struct {
+	Seq   uint64
+	Block uint8
 }
 
 type ServerMode int
@@ -223,10 +240,16 @@ func (self *ManagerConnection) Send(event WireEvent) error {
 	return binary.Write(self.injectConn, binary.LittleEndian, event)
 }
 
-// BlockInput replies back to intercept challenges via the blocking socket context
-func (self *ManagerConnection) BlockInput(block uint8) (int, error) {
+// BlockInput replies back to intercept challenges via the blocking socket context.
+// seq must be the Seq of the event this response answers (from the WireEvent
+// returned by ReadNext), so the server can tell a fresh answer from a stale one.
+func (self *ManagerConnection) BlockInput(seq uint64, block uint8) (int, error) {
 	if self.filterConn == nil {
 		return 0, fmt.Errorf("blocking mode not initialized")
 	}
-	return self.filterConn.Write([]byte{block})
+	buf := new(bytes.Buffer)
+	if err := binary.Write(buf, binary.LittleEndian, FilterResponse{Seq: seq, Block: block}); err != nil {
+		return 0, err
+	}
+	return self.filterConn.Write(buf.Bytes())
 }
