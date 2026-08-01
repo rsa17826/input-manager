@@ -257,7 +257,7 @@ func handleInjectionReader(c *Client) {
 			}
 			return
 		}
-		println(c.name, ev.Code, ev.Value)
+		println(c.name, ev.GetDeviceID(), ev.Code, ev.Value)
 		// Direct routing execution blocks mirrored cleanly from your main loop routing
 		switch ev.Type {
 		case input.EV_KEY:
@@ -356,7 +356,7 @@ func broadcastVirt(ev WireEvent) {
 	}
 }
 
-func keyboardReader(kbd *input.RealKeyboard) {
+func keyboardReader(kbd *input.RealKeyboard, deviceID string) {
 	for {
 		ev, err := kbd.ReadNextInput()
 		if err != nil {
@@ -364,17 +364,19 @@ func keyboardReader(kbd *input.RealKeyboard) {
 			continue
 		}
 
-		eventBus <- WireEvent{
+		wev := WireEvent{
 			Sec:   ev.Time.Sec,
 			Usec:  ev.Time.Usec,
 			Type:  ev.Type,
 			Code:  ev.Code,
 			Value: ev.Value,
 		}
+		wev.SetDeviceID(deviceID)
+		eventBus <- wev
 	}
 }
 
-func mouseReader(mouse *input.RealMouse) {
+func mouseReader(mouse *input.RealMouse, deviceID string) {
 	for {
 		ev, err := mouse.ReadNextInput()
 		if err != nil {
@@ -382,13 +384,15 @@ func mouseReader(mouse *input.RealMouse) {
 			continue
 		}
 
-		eventBus <- WireEvent{
+		wev := WireEvent{
 			Sec:   ev.Time.Sec,
 			Usec:  ev.Time.Usec,
 			Type:  ev.Type,
 			Code:  ev.Code,
 			Value: ev.Value,
 		}
+		wev.SetDeviceID(deviceID)
+		eventBus <- wev
 	}
 }
 
@@ -511,11 +515,11 @@ func main() {
 
 	go startSocketServer()
 	defer closeConnection()
-	for _, kbd := range kbds {
-		go keyboardReader(kbd)
+	for i, kbd := range kbds {
+		go keyboardReader(kbd, kbdIDs[i])
 	}
-	for _, mouse := range mice {
-		go mouseReader(mouse)
+	for i, mouse := range mice {
+		go mouseReader(mouse, mouseIDs[i])
 	}
 
 	var ctrlPressed bool

@@ -15,6 +15,13 @@ import (
 // Duplicated here to avoid importing the input package into the IMan package.
 const evKeyType uint16 = 0x01
 
+// deviceIDLen is the fixed width of the DeviceID field on the wire.
+// WireEvent is sent with encoding/binary, which requires fixed-size
+// fields, so the device identifier (e.g. an evdev path like
+// "/dev/input/event3") is stored as a fixed-length, NUL-padded byte
+// array rather than a Go string.
+const deviceIDLen = 64
+
 type WireEvent struct {
 	Sec   int64
 	Usec  int64
@@ -27,6 +34,27 @@ type WireEvent struct {
 	// strict request/response alternation on the wire. Unused (0) for
 	// other modes.
 	Seq uint64
+	// DeviceID identifies which physical (or virtual) device produced the
+	// event, e.g. the id/path passed to --keyboard/--mouse. Fixed-size so
+	// the struct stays compatible with binary.Read/binary.Write.
+	DeviceID [deviceIDLen]byte
+}
+
+// SetDeviceID copies id into the fixed-size DeviceID field, truncating it
+// if it's longer than deviceIDLen bytes.
+func (e *WireEvent) SetDeviceID(id string) {
+	e.DeviceID = [deviceIDLen]byte{}
+	copy(e.DeviceID[:], id)
+}
+
+// GetDeviceID returns the DeviceID field as a string, with trailing NUL
+// padding stripped.
+func (e *WireEvent) GetDeviceID() string {
+	i := bytes.IndexByte(e.DeviceID[:], 0)
+	if i == -1 {
+		return string(e.DeviceID[:])
+	}
+	return string(e.DeviceID[:i])
 }
 
 // FilterResponse is the framed reply a ModeFilter client sends back for a
