@@ -10,8 +10,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rsa17826/go-arg-lib v0.0.69 h1:G7TYCqUIw3z0QO2v5NHG4VDgY+5JR2nYInGDgxkoFdY=
 github.com/rsa17826/go-arg-lib v0.0.69/go.mod h1:eP/bXinIXD6bZWBMqk9eZJfkkKUcl66j0uuz1amrsdU=
-github.com/rsa17826/go-input-lib v0.0.38 h1:J0kz/Iz2dYEsELkdLs4Ag0WNghFG9n5FInJ/YEU5608=
-github.com/rsa17826/go-input-lib v0.0.38/go.mod h1:T1wppzAanzal1KNtIJpew4sIFwCtlBWegq0vDriqwC0=
+github.com/rsa17826/go-input-lib v0.0.48 h1:nAj/zxC4phvvLcpuENYQjuqBYh81cgnoLtDhNz7/7j4=
+github.com/rsa17826/go-input-lib v0.0.48/go.mod h1:T1wppzAanzal1KNtIJpew4sIFwCtlBWegq0vDriqwC0=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
