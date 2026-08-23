@@ -28,6 +28,34 @@ type Client struct {
 	dead        bool
 	missedCount int    // consecutive filter timeouts; dc at 3
 	nextSeq     uint64 // last Seq assigned to a ModeFilter request sent to this client
+
+	// Filter subscription (ModeFilter only). An event is delivered to this
+	// client if it matches ANY of: wantKeyboards (device is a keyboard),
+	// wantMice (device is a mouse), or its code is in wantCodes. Events that
+	// match none of these are never sent to the client and never block the
+	// main loop waiting on a response.
+	wantKeyboards bool
+	wantMice      bool
+	wantCodes     map[uint16]struct{}
+}
+
+// deviceIsMouse reports whether deviceID names one of the mice this
+// process was told to hook (--mouse). Anything not recognized as a mouse
+// falls back to being treated as a keyboard for filter-matching purposes.
+func deviceIsMouse(deviceID string) bool {
+	return mouseIDSet[deviceID]
+}
+
+// wantsCode reports whether client c's filter subscription covers a given
+// key/button code, given whether it originated from a mouse device.
+func (c *Client) wantsCode(code uint16, fromMouse bool) bool {
+	if _, ok := c.wantCodes[code]; ok {
+		return true
+	}
+	if fromMouse {
+		return c.wantMice
+	}
+	return c.wantKeyboards
 }
 
 var (
@@ -55,6 +83,14 @@ var (
 
 	virtKeyState   = make(map[uint16]int32)
 	virtKeyStateMu sync.Mutex
+
+	// keyboardIDSet / mouseIDSet let the server classify a real event's
+	// DeviceID as coming from a keyboard or a mouse, for matching against a
+	// ModeFilter client's subscription. Populated once in main() from the
+	// --keyboard/--mouse args and never mutated afterward, so reads are safe
+	// without a lock.
+	keyboardIDSet = make(map[string]bool)
+	mouseIDSet    = make(map[string]bool)
 )
 
 func applyKeyState(m map[uint16]int32, code uint16, value int32) {
@@ -93,6 +129,13 @@ func sendInitialKeyState(c *Client) {
 	usec := int64(now.Nanosecond() / 1000)
 
 	for code, value := range snapshot {
+		// No DeviceID is available for this synthetic snapshot event, so
+		// fall back to the same code>=256-means-mouse heuristic used
+		// elsewhere for routing key vs. button codes.
+		if c.mode == ModeFilter && !c.wantsCode(code, code >= 256) {
+			continue
+		}
+
 		ev := WireEvent{Sec: sec, Usec: usec, Type: input.EV_KEY, Code: code, Value: value}
 
 		switch c.mode {
@@ -196,6 +239,41 @@ func handleNewConnection(conn net.Conn) {
 		name:   name,
 		pid:    pid,
 		send:   make(chan WireEvent, 256),
+	}
+
+	// ModeFilter clients follow the handshake with a filter subscription:
+	// 1 flags byte (bit0=keyboards, bit1=mice), 2-byte LE keycode count, then
+	// that many LE uint16 keycodes.
+	if mode == ModeFilter {
+		flagsBuf := make([]byte, 1)
+		if _, err = io.ReadFull(conn, flagsBuf); err != nil {
+			conn.Close()
+			return
+		}
+		c.wantKeyboards = flagsBuf[0]&0x01 != 0
+		c.wantMice = flagsBuf[0]&0x02 != 0
+
+		countBuf := make([]byte, 2)
+		if _, err = io.ReadFull(conn, countBuf); err != nil {
+			conn.Close()
+			return
+		}
+		count := int(countBuf[0]) | int(countBuf[1])<<8
+
+		if count > 0 {
+			c.wantCodes = make(map[uint16]struct{}, count)
+			codeBuf := make([]byte, 2)
+			for i := 0; i < count; i++ {
+				if _, err = io.ReadFull(conn, codeBuf); err != nil {
+					conn.Close()
+					return
+				}
+				code := uint16(codeBuf[0]) | uint16(codeBuf[1])<<8
+				c.wantCodes[code] = struct{}{}
+			}
+		}
+
+		fmt.Printf("FILTER client %q subscribed: keyboards=%v mice=%v codes=%d\n", name, c.wantKeyboards, c.wantMice, len(c.wantCodes))
 	}
 
 	// Replay currently-held keys to non-injection clients BEFORE they enter the
@@ -466,6 +544,13 @@ func main() {
 	if len(kbdIDs) == 0 && len(mouseIDs) == 0 {
 		argparse.PrintHelpAndExit()
 	}
+	for _, id := range kbdIDs {
+		keyboardIDSet[id] = true
+	}
+	for _, id := range mouseIDs {
+		mouseIDSet[id] = true
+	}
+
 	var kbds []*input.RealKeyboard
 	var mice []*input.RealMouse
 	for _, id := range kbdIDs {
@@ -601,6 +686,12 @@ func filterClients(ev WireEvent) bool {
 		live = append(live, c)
 
 		if c.mode != ModeFilter {
+			continue
+		}
+
+		if !c.wantsCode(ev.Code, deviceIsMouse(ev.GetDeviceID())) {
+			// Not subscribed to this event: don't send it and don't wait on
+			// a response, so unwanted traffic never touches the wire.
 			continue
 		}
 

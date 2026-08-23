@@ -67,6 +67,47 @@ type FilterResponse struct {
 	Block uint8
 }
 
+// FilterSpec describes which events a ModeFilter client wants to receive
+// (and therefore must answer with BlockInput). Events that don't match the
+// spec are never sent to the client at all — the server just lets them
+// through without waiting on a response, so unsubscribed traffic costs
+// nothing on the wire.
+//
+// Keyboards and Mice select events by originating device type; Keycodes
+// selects specific key/button codes regardless of device type. Any
+// combination may be set — an event is delivered if it matches ANY of the
+// selected criteria. Leaving everything unset means the client receives
+// nothing.
+type FilterSpec struct {
+	Keyboards bool
+	Mice      bool
+	Keycodes  []uint16
+}
+
+// writeFilterSpec sends a FilterSpec over conn immediately after the
+// standard handshake, for ModeFilter connections only. Wire format:
+//
+//	1 byte  flags (bit0 = keyboards, bit1 = mice)
+//	2 bytes keycode count (little-endian uint16)
+//	N * 2 bytes keycodes (little-endian uint16 each)
+func writeFilterSpec(conn net.Conn, spec *FilterSpec) error {
+	var flags byte
+	if spec.Keyboards {
+		flags |= 0x01
+	}
+	if spec.Mice {
+		flags |= 0x02
+	}
+	buf := new(bytes.Buffer)
+	buf.WriteByte(flags)
+	binary.Write(buf, binary.LittleEndian, uint16(len(spec.Keycodes)))
+	for _, code := range spec.Keycodes {
+		binary.Write(buf, binary.LittleEndian, code)
+	}
+	_, err := conn.Write(buf.Bytes())
+	return err
+}
+
 type ServerMode int
 
 const (
@@ -102,7 +143,23 @@ type ManagerConnection struct {
 	virtKeyMapMu  sync.RWMutex
 }
 
+// Connect opens the requested mode connections. For ModeFilter, this
+// subscribes to ALL events (keyboards + mice) for backwards compatibility;
+// use ConnectFilter to subscribe to a subset instead.
 func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
+	return connect(name, nil, modes...)
+}
+
+// ConnectFilter is like Connect, but lets a ModeFilter client declare which
+// events it actually wants to see (see FilterSpec). Events outside the spec
+// are never sent to this client and never wait on a BlockInput response,
+// which keeps unsubscribed traffic off the wire entirely. spec is ignored
+// for modes other than ModeFilter.
+func ConnectFilter(name string, spec FilterSpec, modes ...ServerMode) (*ManagerConnection, error) {
+	return connect(name, &spec, modes...)
+}
+
+func connect(name string, filter *FilterSpec, modes ...ServerMode) (*ManagerConnection, error) {
 	mgr := &ManagerConnection{
 		eventChan: make(chan RoutedEvent, 512),
 		closeChan: make(chan struct{}),
@@ -133,6 +190,18 @@ func Connect(name string, modes ...ServerMode) (*ManagerConnection, error) {
 			conn.Close()
 			mgr.Close()
 			return nil, err
+		}
+
+		if mode == ModeFilter {
+			fs := filter
+			if fs == nil {
+				fs = &FilterSpec{Keyboards: true, Mice: true}
+			}
+			if err = writeFilterSpec(conn, fs); err != nil {
+				conn.Close()
+				mgr.Close()
+				return nil, err
+			}
 		}
 
 		switch mode {
