@@ -540,7 +540,10 @@ func main() {
 		{Keys: []string{"maxX"}, AfterCount: 1, VarArgs: false, Target: &maxX, Description: "max screen x", AllowDupes: false, Default: []any{1920}},
 		{Keys: []string{"maxY"}, AfterCount: 1, VarArgs: false, Target: &maxY, Description: "max screen y", AllowDupes: false, Default: []any{1080}},
 	})
-	// print(maxX)
+	println("MAXX")
+	println(maxX)
+	println("MAXY")
+	println(maxY)
 	if len(kbdIDs) == 0 && len(mouseIDs) == 0 {
 		argparse.PrintHelpAndExit()
 	}
